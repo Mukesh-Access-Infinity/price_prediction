@@ -1,0 +1,6 @@
+*env/**
+frontend/**
+data/*.pickle
+main.py
+__pycache__/
+*.ipynb
