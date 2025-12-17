@@ -163,7 +163,7 @@ def get_processed_data(refresh=False):
         df["ppp_price_per_unit"] = df["cost_per_unit"] / df["ppp_rate"]
         df["ppp_price"] = df["price"] / df["ppp_rate"]
         df.drop(columns=["ppp_rate"], inplace=True)
-        df["mfn_price"] = df.groupby(["year", "brand_name", "form"])[
+        df["mfn_price"] = df.groupby(["year", "brand_name"])[
             "ppp_price"
         ].transform(lambda x: x.nsmallest(2).max())
         df = df.reset_index(drop=True)

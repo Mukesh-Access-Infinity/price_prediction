@@ -183,7 +183,7 @@ def fetch_data(brand: Optional[str] = None):
                 # Table 2 columns
                 row2[(year, "USD")] = metrics.get("Cost Per Unit USD", None)
                 row2[(year, "PPP")] = metrics.get("Cost Per Unit PPP", None)
-
+                row2[(year, "MFN")] = metrics.get("MFN Price USD", None)
             table1_rows.append(row1)
             table2_rows.append(row2)
 
