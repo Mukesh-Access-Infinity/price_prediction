@@ -350,7 +350,7 @@ def main():
                 margin: -2rem -2rem 2rem -2rem;
                 border-radius: 0;'>
         <h1 style='color: white; margin: 0; font-weight: 700; letter-spacing: -0.5px;'>
-            Brand Prediction Dashboard
+            Brand Price Dashboard
         </h1>
     </div>
     """,
