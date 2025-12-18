@@ -231,15 +231,23 @@ def fetch_data(
         # Build Table 3: Country, Pack, Cost Per Unit (USD), MFN Price (USD) - Year Wise
         table3_rows = []
 
+        # Collect all packs in the filtered set (for US MFN table completeness)
+        filtered_packs = set(
+            [
+                item["Pack"]
+                for item in brand_data
+                if (not packs or item["Pack"] in packs)
+            ]
+        )
+        us_rows_by_pack = {}
+
         for item in brand_data:
             country = item["Country"]
             pack = item["Pack"]
             year_data = item["Year"]
 
             # Apply filters
-            # Country filter applies to Table 1 and 2 only (non-US data)
             country_filter_match = not countries or country in countries
-            # Pack filter applies to all tables
             pack_filter_match = not packs or pack in packs
 
             # Prepare row for table 1
@@ -267,16 +275,26 @@ def fetch_data(
                     # Table 3 columns
                     row3[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
                     row3[(year, "MFN Price")] = metrics.get("MFN Price USD", None)
-
             if country.lower() != "united states of america":
-                # Apply country and pack filters to Table 1 and 2
                 if country_filter_match and pack_filter_match:
                     table1_rows.append(row1)
                     table2_rows.append(row2)
             else:
-                # Apply only pack filter to Table 3 (US data)
                 if pack_filter_match:
-                    table3_rows.append(row3)
+                    us_rows_by_pack[pack] = row3
+
+        # For US MFN table: ensure all filtered packs are present, even if not in US data
+        for pack in filtered_packs:
+            if pack in us_rows_by_pack:
+                table3_rows.append(us_rows_by_pack[pack])
+            # Uncomment to include missing US price packs as well
+            # else:
+            #     # Create empty row for missing pack
+            #     empty_row = {"Country": "United States of America", "Pack": pack}
+            #     for year in all_years:
+            #         empty_row[(year, "USD Price")] = None
+            #         empty_row[(year, "MFN Price")] = None
+            #     table3_rows.append(empty_row)
 
         # Create DataFrames with multi-index columns
         df1 = pd.DataFrame(table1_rows)
@@ -612,9 +630,24 @@ def main():
                     unsafe_allow_html=True,
                 )
 
-                st.dataframe(
-                    table1_df, use_container_width=True, height=400, hide_index=True
-                )
+                nrows = len(table1_df)
+                if nrows > 10:
+                    st.dataframe(
+                        table1_df, use_container_width=True, height=400, hide_index=True
+                    )
+                else:
+                    # Estimate row height (approx 35px per row + header)
+                    row_height = 35
+                    header_height = 40
+                    height = header_height + row_height * (
+                        nrows + 1 if nrows > 0 else 1
+                    )
+                    st.dataframe(
+                        table1_df,
+                        use_container_width=True,
+                        height=height,
+                        hide_index=True,
+                    )
 
                 st.markdown(
                     f"""
@@ -624,7 +657,7 @@ def main():
                             font-weight: 600;
                             background: #f8fafc;
                             border-top: 2px solid #e2e8f0;'>
-                    Showing {len(table1_df)} rows
+                    Showing {nrows} rows
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -669,12 +702,23 @@ def main():
                     unsafe_allow_html=True,
                 )
 
-                st.dataframe(
-                    table2_df,
-                    use_container_width=True,
-                    height=400,
-                    hide_index=True,
-                )
+                nrows = len(table2_df)
+                if nrows > 10:
+                    st.dataframe(
+                        table2_df, use_container_width=True, height=400, hide_index=True
+                    )
+                else:
+                    row_height = 35
+                    header_height = 40
+                    height = header_height + row_height * (
+                        nrows + 1 if nrows > 0 else 1
+                    )
+                    st.dataframe(
+                        table2_df,
+                        use_container_width=True,
+                        height=height,
+                        hide_index=True,
+                    )
 
                 st.markdown(
                     f"""
@@ -684,7 +728,7 @@ def main():
                             font-weight: 600;
                             background: #f8fafc;
                             border-top: 2px solid #e2e8f0;'>
-                    Showing {len(table2_df)} rows
+                    Showing {nrows} rows
                 </div>
                 """,
                     unsafe_allow_html=True,
@@ -716,6 +760,29 @@ def main():
             if table3_df.empty:
                 st.warning("No data available for Table 3")
             else:
+                # Sort: fuller rows (with more valid data) first, emptier rows last
+                # Count non-missing values in MFN Price columns for each row
+                mfn_cols = [
+                    col
+                    for col in table3_df.columns
+                    if isinstance(col, tuple) and col[1] == "MFN Price"
+                ]
+
+                def count_valid(row):
+                    count = 0
+                    for col in mfn_cols:
+                        val = row[col]
+                        if pd.notna(val) and val != "-" and val != "":
+                            count += 1
+                    return count
+
+                table3_df = table3_df.copy()
+                table3_df["_valid_mfn"] = table3_df.apply(count_valid, axis=1)
+                # Sort descending by valid MFN count, then by pack name for stability
+                table3_df = table3_df.sort_values(
+                    ["_valid_mfn", ("", "Pack")], ascending=[False, True]
+                ).drop(columns=["_valid_mfn"])
+
                 st.markdown(
                     """
                 <div style='background: white;
@@ -728,12 +795,23 @@ def main():
                     unsafe_allow_html=True,
                 )
 
-                st.dataframe(
-                    table3_df,
-                    use_container_width=True,
-                    height=400,
-                    hide_index=True,
-                )
+                nrows = len(table3_df)
+                if nrows > 10:
+                    st.dataframe(
+                        table3_df, use_container_width=True, height=400, hide_index=True
+                    )
+                else:
+                    row_height = 35
+                    header_height = 40
+                    height = header_height + row_height * (
+                        nrows + 1 if nrows > 0 else 1
+                    )
+                    st.dataframe(
+                        table3_df,
+                        use_container_width=True,
+                        height=height,
+                        hide_index=True,
+                    )
 
                 st.markdown(
                     f"""
@@ -743,7 +821,7 @@ def main():
                             font-weight: 600;
                             background: #f8fafc;
                             border-top: 2px solid #e2e8f0;'>
-                    Showing {len(table3_df)} rows
+                    Showing {nrows} rows
                 </div>
                 """,
                     unsafe_allow_html=True,
