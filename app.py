@@ -485,13 +485,6 @@ def main():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        st.markdown(
-            """
-        <h3 style='margin: 0 0 1.5rem 0; color: #1e293b; font-weight: 700;'>Filters</h3>
-        """,
-            unsafe_allow_html=True,
-        )
-
         col1, col2 = st.columns(2)
         # Get current selections from session state for persistence
         prev_selected_countries = st.session_state.get("selected_countries", [])
@@ -499,7 +492,6 @@ def main():
 
         with col1:
 
-            # Countries filtered by selected packs (if any)
             available_countries = (
                 fetch_countries_for_packs(selected_brand, prev_selected_packs)
                 if prev_selected_packs
@@ -523,7 +515,7 @@ def main():
                 else brand_filters.get("packs", [])
             )
             selected_packs = st.multiselect(
-                label="Select Forms",
+                label="Select Packs ",
                 options=available_packs,
                 default=[p for p in prev_selected_packs if p in available_packs],
                 placeholder="All packs",
