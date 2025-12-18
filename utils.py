@@ -1,6 +1,18 @@
 import os
 import pandas as pd
 
+
+reference_bucket = [
+    "United Kingdom",
+    "France",
+    "Germany",
+    "Italy",
+    "Canada",
+    "Japan",
+    "Denmark",
+    "Switzerland",
+    "United States of America",
+]
 data_root = "./data"
 os.makedirs(data_root, exist_ok=True)
 
@@ -125,6 +137,7 @@ def get_processed_data(refresh=False):
             how="all",
         )
         df["country"] = df["country"].str.lower()
+        df = df[df["country"].isin([i for i in {_.lower() for _ in reference_bucket}])]
         brand_year_country_count = df.groupby(["brand_name", "year"])[
             "country"
         ].nunique()
@@ -154,7 +167,7 @@ def get_processed_data(refresh=False):
         ppp_["year"] = ppp_["year"].astype(int)
         df = df[
             df["year"].isin(ppp_["year"].unique())
-            & df["country"].isin(ppp_["country"].unique())
+            & df["country"].isin([i for i in {_.lower() for _ in reference_bucket}])
         ]
         df = df.merge(ppp_, on=["country", "year"], how="left")
         df.drop_duplicates(inplace=True, subset=UNIQUE_COLS)
@@ -163,9 +176,9 @@ def get_processed_data(refresh=False):
         df["ppp_price_per_unit"] = df["cost_per_unit"] / df["ppp_rate"]
         df["ppp_price"] = df["price"] / df["ppp_rate"]
         df.drop(columns=["ppp_rate"], inplace=True)
-        df["mfn_price"] = df.groupby(["year", "brand_name"])[
-            "ppp_price"
-        ].transform(lambda x: x.nsmallest(2).max())
+        df["mfn_price"] = df.groupby(["year", "brand_name"])["ppp_price"].transform(
+            lambda x: x.nsmallest(2).max()
+        )
         df = df.reset_index(drop=True)
         save(df, "processed_price_data")
         return get_agg(df)

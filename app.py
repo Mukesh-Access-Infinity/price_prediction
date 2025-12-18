@@ -7,7 +7,7 @@ from typing import Optional
 
 # Page configuration
 st.set_page_config(
-    page_title="Price Prediction Dashboard",
+    page_title="Brand Price Dashboard",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -145,13 +145,21 @@ def fetch_data(brand: Optional[str] = None):
         all_data = get_data()
 
         if not brand:
-            return {"table1": pd.DataFrame(), "table2": pd.DataFrame()}
+            return {
+                "table1": pd.DataFrame(),
+                "table2": pd.DataFrame(),
+                "table3": pd.DataFrame(),
+            }
 
         # Filter data for selected brand
         brand_data = [item for item in all_data if item["Brand Name"] == brand]
 
         if not brand_data:
-            return {"table1": pd.DataFrame(), "table2": pd.DataFrame()}
+            return {
+                "table1": pd.DataFrame(),
+                "table2": pd.DataFrame(),
+                "table3": pd.DataFrame(),
+            }
 
         # Collect all years to ensure consistent columns
         all_years = set()
@@ -163,6 +171,8 @@ def fetch_data(brand: Optional[str] = None):
         table1_rows = []
         # Build Table 2: Country, Pack, Cost Per Unit (USD), Cost Per Unit (PPP) - Year Wise
         table2_rows = []
+        # Build Table 3: Country, Pack, Cost Per Unit (USD), MFN Price (USD) - Year Wise
+        table3_rows = []
 
         for item in brand_data:
             country = item["Country"]
@@ -173,23 +183,37 @@ def fetch_data(brand: Optional[str] = None):
             row1 = {"Country": country, "Pack": pack}
             # Prepare row for table 2
             row2 = {"Country": country, "Pack": pack}
+            # Prepare row for table 3
+            row3 = {"Country": country, "Pack": pack}
 
             for year in all_years:
                 metrics = year_data.get(year, {})
                 # Table 1 columns
-                row1[(year, "Local")] = metrics.get("Cost Per Unit Local", None)
-                row1[(year, "USD")] = metrics.get("Cost Per Unit USD", None)
+                if country.lower() != "united states of america":
+                    row1[(year, "Local Price")] = metrics.get(
+                        "Cost Per Unit Local", None
+                    )
+                    row1[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
 
-                # Table 2 columns
-                row2[(year, "USD")] = metrics.get("Cost Per Unit USD", None)
-                row2[(year, "PPP")] = metrics.get("Cost Per Unit PPP", None)
-                row2[(year, "MFN")] = metrics.get("MFN Price USD", None)
-            table1_rows.append(row1)
-            table2_rows.append(row2)
+                    # Table 2 columns
+                    row2[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
+                    row2[(year, "PPP Adjusted Price")] = metrics.get(
+                        "Cost Per Unit PPP", None
+                    )
+                else:
+                    # Table 3 columns
+                    row3[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
+                    row3[(year, "MFN Price")] = metrics.get("MFN Price USD", None)
+            if country.lower() != "united states of america":
+                table1_rows.append(row1)
+                table2_rows.append(row2)
+            else:
+                table3_rows.append(row3)
 
         # Create DataFrames with multi-index columns
         df1 = pd.DataFrame(table1_rows)
         df2 = pd.DataFrame(table2_rows)
+        df3 = pd.DataFrame(table3_rows)
 
         # Separate basic columns from year columns
         basic_cols = ["Country", "Pack"]
@@ -208,10 +232,21 @@ def fetch_data(brand: Optional[str] = None):
             new_cols2 = [("", col) for col in basic_cols] + year_cols2
             df2.columns = pd.MultiIndex.from_tuples(new_cols2)
 
-        return {"table1": df1, "table2": df2}
+        # Create proper multi-index for table 3
+        if not df3.empty:
+            year_cols3 = [col for col in df3.columns if col not in basic_cols]
+            # Create new column structure
+            new_cols3 = [("", col) for col in basic_cols] + year_cols3
+            df3.columns = pd.MultiIndex.from_tuples(new_cols3)
+
+        return {"table1": df1, "table2": df2, "table3": df3}
     except Exception as e:
         st.error(f"Failed to fetch data: {str(e)}")
-        return {"table1": pd.DataFrame(), "table2": pd.DataFrame()}
+        return {
+            "table1": pd.DataFrame(),
+            "table2": pd.DataFrame(),
+            "table3": pd.DataFrame(),
+        }
 
 
 def export_to_excel(brand):
@@ -219,7 +254,7 @@ def export_to_excel(brand):
     try:
         result = fetch_data(brand=brand)
 
-        # Create Excel file with both tables
+        # Create Excel file with all tables
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             # Write Table 1
@@ -244,6 +279,17 @@ def export_to_excel(brand):
                     ]
                 df2.to_excel(writer, index=False, sheet_name="USD vs PPP")
 
+            # Write Table 3
+            df3 = result["table3"].copy()
+            if not df3.empty:
+                # Flatten MultiIndex columns for Excel export
+                if isinstance(df3.columns, pd.MultiIndex):
+                    df3.columns = [
+                        f"{col[0]} - {col[1]}" if col[0] else col[1]
+                        for col in df3.columns
+                    ]
+                df3.to_excel(writer, index=False, sheet_name="US - MFN")
+
         output.seek(0)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return output.getvalue(), f"price_data_{brand}_{timestamp}.xlsx"
@@ -252,27 +298,19 @@ def export_to_excel(brand):
         return None, None
 
 
-def style_dataframe(df):
+def style_dataframe(df: pd.DataFrame):
     """Apply styling to dataframe"""
+
     if df.empty:
         return df
+    ppp_col = [col for col in df.columns if "ppp" in str(col).lower()][0]
+    mfn_price = df[ppp_col].replace("-", 0).astype(float).nsmallest(2).max()
 
     def apply_styles(row):
         styles = []
-        for col in df.columns:
-            if col in ["Country", "Pack"]:
-                styles.append(
-                    "background-color: #dbeafe; font-weight: 600; color: #1e293b"
-                )
-            else:
-                value = row[col]
-                # Grey out cells with 0.0, "-", or null
-                if value == "-" or value == 0 or value == 0.0 or pd.isna(value):
-                    styles.append(
-                        "background-color: #f3f4f6; color: #9ca3af; font-style: italic; text-align: right"
-                    )
-                else:
-                    styles.append("background-color: #fef3c7; text-align: right")
+        value = row[ppp_col]
+        if value == mfn_price:
+            styles.append("background-color: #dbeafe; font-weight: 600; color: #1e293b")
         return styles
 
     return df.style.apply(apply_styles, axis=1)
@@ -312,7 +350,7 @@ def main():
                 margin: -2rem -2rem 2rem -2rem;
                 border-radius: 0;'>
         <h1 style='color: white; margin: 0; font-weight: 700; letter-spacing: -0.5px;'>
-            Price Prediction Dashboard
+            Brand Prediction Dashboard
         </h1>
     </div>
     """,
@@ -322,80 +360,52 @@ def main():
     # Fetch filter options
     filter_options = fetch_filter_options()
 
-    # Brand selection section
     with st.container():
-        st.markdown(
-            """
-        <div style='background: #ffffff;
-                    padding: 2rem;
-                    border-radius: 12px;
-                    border: 1px solid #e2e8f0;
-                    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
-                    margin-bottom: 1.5rem;'>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            """
-        <h3 style='margin: 0 0 1rem 0; color: #1e293b; font-weight: 700;'>Select Brand</h3>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        # Single select dropdown for brand
-        selected_brand = st.selectbox(
-            label="Choose a brand to view data",
-            options=[""] + filter_options.get("brands", []),
-            index=0,
-            placeholder="Select a brand...",
-            label_visibility="collapsed",
-            key="selected_brand",
-        )
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Export button
-    if selected_brand:
-        st.markdown(
-            """
-        <div style='background: #ffffff;
-                    padding: 1.5rem 2rem;
-                    border-radius: 12px;
-                    border: 1px solid #e2e8f0;
-                    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
-                    margin-bottom: 1.5rem;'>
-        """,
-            unsafe_allow_html=True,
-        )
-
         col1, col2 = st.columns([3, 1])
 
         with col1:
             st.markdown(
                 """
-            <h3 style='margin: 0; color: #1e293b; font-weight: 700;'>Export Data</h3>
-            <p style='margin: 0.5rem 0 0 0; color: #64748b; font-size: 14px;'>Download the current data tables to Excel format</p>
+            <h3 style='margin: 0 0 1rem 0; color: #1e293b; font-weight: 700;'>Select Brand</h3>
             """,
                 unsafe_allow_html=True,
             )
 
-        with col2:
-            if st.button("Export to Excel", use_container_width=True):
-                with st.spinner("Generating Excel file..."):
-                    excel_data, filename = export_to_excel(selected_brand)
-                    if excel_data:
-                        st.download_button(
-                            label="Download File",
-                            data=excel_data,
-                            file_name=filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True,
-                        )
-                        st.success("Excel file ready for download!")
+            # Single select dropdown for brand
+            selected_brand = st.selectbox(
+                label="Choose a brand to view data",
+                options=[""] + filter_options.get("brands", []),
+                index=0,
+                placeholder="Select a brand...",
+                label_visibility="collapsed",
+                key="selected_brand",
+            )
 
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(
+                """
+            <br>
+            <br>
+            <br>
+            """,
+                unsafe_allow_html=True,
+            )
+            if st.button("Export to Excel", use_container_width=True, disabled=not selected_brand):
+                if selected_brand:
+                    with st.spinner("Generating Excel file..."):
+                        excel_data, filename = export_to_excel(selected_brand)
+                        if excel_data:
+                            st.download_button(
+                                label="Download File",
+                                data=excel_data,
+                                file_name=filename,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True,
+                            )
+                            st.success("Excel file ready for download!")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # Data display section
     if not selected_brand:
@@ -455,8 +465,8 @@ def main():
                         border: 1px solid #e2e8f0;
                         border-bottom: none;
                         box-shadow: 0 4px 20px rgba(0,0,0,0.04);'>
-                <h3 style='margin: 0; color: #1e293b; font-weight: 700;'>
-                    Table 1: Cost Per Unit - Local Currency vs USD
+                <h3 style='margin: 0; color: #1e293b; font-weight: 700; text-align: center;'>
+                    Local Currency - USD Prices
                 </h3>
             </div>
             """,
@@ -512,8 +522,8 @@ def main():
                         border: 1px solid #e2e8f0;
                         border-bottom: none;
                         box-shadow: 0 4px 20px rgba(0,0,0,0.04);'>
-                <h3 style='margin: 0; color: #1e293b; font-weight: 700;'>
-                    Table 2: Cost Per Unit - USD vs PPP Adjusted
+                <h3 style='margin: 0; color: #1e293b; font-weight: 700; text-align: center;'>
+                    USD Prices - PPP Adjusted Prices
                 </h3>
             </div>
             """,
@@ -532,13 +542,17 @@ def main():
                             border-radius: 0 0 12px 12px;
                             border: 1px solid #e2e8f0;
                             box-shadow: 0 4px 20px rgba(0,0,0,0.04);
-                            overflow: hidden;'>
+                            overflow: hidden;
+                            margin-bottom: 2rem;'>
                 """,
                     unsafe_allow_html=True,
                 )
 
                 st.dataframe(
-                    table2_df, use_container_width=True, height=400, hide_index=True
+                    table2_df,
+                    use_container_width=True,
+                    height=400,
+                    hide_index=True,
                 )
 
                 st.markdown(
@@ -550,6 +564,65 @@ def main():
                             background: #f8fafc;
                             border-top: 2px solid #e2e8f0;'>
                     Showing {len(table2_df)} rows
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Table 3: Cost Per Unit (USD) - MFN Price (USD)
+            st.markdown(
+                """
+            <div style='background: white;
+                        padding: 1.5rem 2rem;
+                        border-radius: 12px 12px 0 0;
+                        border: 1px solid #e2e8f0;
+                        border-bottom: none;
+                        box-shadow: 0 4px 20px rgba(0,0,0,0.04);'>
+                <h3 style='margin: 0; color: #1e293b; font-weight: 700; text-align: center;'>
+                    US - MFN Price
+                </h3>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+            table3_df = create_display_table(result["table3"])
+
+            if table3_df.empty:
+                st.warning("No data available for Table 3")
+            else:
+                st.markdown(
+                    """
+                <div style='background: white;
+                            padding: 0;
+                            border-radius: 0 0 12px 12px;
+                            border: 1px solid #e2e8f0;
+                            box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+                            overflow: hidden;'>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+                st.dataframe(
+                    table3_df,
+                    use_container_width=True,
+                    height=400,
+                    hide_index=True,
+                )
+
+                st.markdown(
+                    f"""
+                <div style='text-align: center; 
+                            padding: 1rem; 
+                            color: #64748b; 
+                            font-weight: 600;
+                            background: #f8fafc;
+                            border-top: 2px solid #e2e8f0;'>
+                    Showing {len(table3_df)} rows
                 </div>
                 """,
                     unsafe_allow_html=True,
