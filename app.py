@@ -124,7 +124,10 @@ st.markdown(
 @st.cache_data
 def get_data():
     """Load data from get_processed_data"""
-    return get_processed_data(refresh=False)
+    r = get_processed_data(refresh=False)
+    if not isinstance(r, list):
+        raise ValueError(r)
+    return r
 
 
 @st.cache_data
@@ -139,7 +142,61 @@ def fetch_filter_options():
         return {"brands": []}
 
 
-def fetch_data(brand: Optional[str] = None):
+@st.cache_data
+def fetch_brand_specific_filters(brand: str):
+    """Get countries and packs for a specific brand"""
+    try:
+        data = get_data()
+        brand_data = [item for item in data if item["Brand Name"] == brand]
+
+        countries = sorted(set([item["Country"] for item in brand_data]))
+        packs = sorted(set([item["Pack"] for item in brand_data]))
+
+        return {"countries": countries, "packs": packs}
+    except Exception as e:
+        st.error(f"Failed to fetch brand filters: {str(e)}")
+        return {"countries": [], "packs": []}
+
+
+def fetch_packs_for_countries(brand: str, countries: list):
+    """Get packs available for specific countries"""
+    try:
+        data = get_data()
+        brand_data = [item for item in data if item["Brand Name"] == brand]
+
+        if countries:
+            # Filter by selected countries
+            brand_data = [item for item in brand_data if item["Country"] in countries]
+
+        packs = sorted(set([item["Pack"] for item in brand_data]))
+        return packs
+    except Exception as e:
+        st.error(f"Failed to fetch packs: {str(e)}")
+        return []
+
+
+def fetch_countries_for_packs(brand: str, packs: list):
+    """Get countries available for specific packs"""
+    try:
+        data = get_data()
+        brand_data = [item for item in data if item["Brand Name"] == brand]
+
+        if packs:
+            # Filter by selected packs
+            brand_data = [item for item in brand_data if item["Pack"] in packs]
+
+        countries = sorted(set([item["Country"] for item in brand_data]))
+        return countries
+    except Exception as e:
+        st.error(f"Failed to fetch countries: {str(e)}")
+        return []
+
+
+def fetch_data(
+    brand: Optional[str] = None,
+    countries: Optional[list] = None,
+    packs: Optional[list] = None,
+):
     """Fetch and filter data for a specific brand"""
     try:
         all_data = get_data()
@@ -179,6 +236,12 @@ def fetch_data(brand: Optional[str] = None):
             pack = item["Pack"]
             year_data = item["Year"]
 
+            # Apply filters
+            # Country filter applies to Table 1 and 2 only (non-US data)
+            country_filter_match = not countries or country in countries
+            # Pack filter applies to all tables
+            pack_filter_match = not packs or pack in packs
+
             # Prepare row for table 1
             row1 = {"Country": country, "Pack": pack}
             # Prepare row for table 2
@@ -204,11 +267,16 @@ def fetch_data(brand: Optional[str] = None):
                     # Table 3 columns
                     row3[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
                     row3[(year, "MFN Price")] = metrics.get("MFN Price USD", None)
+
             if country.lower() != "united states of america":
-                table1_rows.append(row1)
-                table2_rows.append(row2)
+                # Apply country and pack filters to Table 1 and 2
+                if country_filter_match and pack_filter_match:
+                    table1_rows.append(row1)
+                    table2_rows.append(row2)
             else:
-                table3_rows.append(row3)
+                # Apply only pack filter to Table 3 (US data)
+                if pack_filter_match:
+                    table3_rows.append(row3)
 
         # Create DataFrames with multi-index columns
         df1 = pd.DataFrame(table1_rows)
@@ -249,10 +317,10 @@ def fetch_data(brand: Optional[str] = None):
         }
 
 
-def export_to_excel(brand):
+def export_to_excel(brand, countries=None, packs=None):
     """Generate Excel export"""
     try:
-        result = fetch_data(brand=brand)
+        result = fetch_data(brand=brand, countries=countries, packs=packs)
 
         # Create Excel file with all tables
         output = io.BytesIO()
@@ -390,10 +458,17 @@ def main():
             """,
                 unsafe_allow_html=True,
             )
-            if st.button("Export to Excel", use_container_width=True, disabled=not selected_brand):
+            if st.button(
+                "Export to Excel", use_container_width=True, disabled=not selected_brand
+            ):
                 if selected_brand:
                     with st.spinner("Generating Excel file..."):
-                        excel_data, filename = export_to_excel(selected_brand)
+                        # Get current filter values for export
+                        countries = st.session_state.get("selected_countries", None)
+                        packs = st.session_state.get("selected_packs", None)
+                        excel_data, filename = export_to_excel(
+                            selected_brand, countries, packs
+                        )
                         if excel_data:
                             st.download_button(
                                 label="Download File",
@@ -403,6 +478,60 @@ def main():
                                 use_container_width=True,
                             )
                             st.success("Excel file ready for download!")
+
+    # Additional filters for Country and Pack (only show when brand is selected)
+    if selected_brand:
+        brand_filters = fetch_brand_specific_filters(selected_brand)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown(
+            """
+        <h3 style='margin: 0 0 1.5rem 0; color: #1e293b; font-weight: 700;'>Filters</h3>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        col1, col2 = st.columns(2)
+        # Get current selections from session state for persistence
+        prev_selected_countries = st.session_state.get("selected_countries", [])
+        prev_selected_packs = st.session_state.get("selected_packs", [])
+
+        with col1:
+
+            # Countries filtered by selected packs (if any)
+            available_countries = (
+                fetch_countries_for_packs(selected_brand, prev_selected_packs)
+                if prev_selected_packs
+                else brand_filters.get("countries", [])
+            )
+            selected_countries = st.multiselect(
+                label="Select Countries",
+                options=available_countries,
+                default=[
+                    c for c in prev_selected_countries if c in available_countries
+                ],
+                placeholder="All countries",
+                key="selected_countries",
+            )
+
+        with col2:
+
+            available_packs = (
+                fetch_packs_for_countries(selected_brand, selected_countries)
+                if selected_countries
+                else brand_filters.get("packs", [])
+            )
+            selected_packs = st.multiselect(
+                label="Select Forms",
+                options=available_packs,
+                default=[p for p in prev_selected_packs if p in available_packs],
+                placeholder="All packs",
+                key="selected_packs",
+            )
+    else:
+        selected_countries = None
+        selected_packs = None
 
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
@@ -425,7 +554,7 @@ def main():
         )
     else:
         with st.spinner("Loading data..."):
-            result = fetch_data(selected_brand)
+            result = fetch_data(selected_brand, selected_countries, selected_packs)
 
             # Custom CSS for multi-level headers
             st.markdown(

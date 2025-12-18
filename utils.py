@@ -29,6 +29,85 @@ def load(
     return pd.DataFrame()
 
 
+import re
+from collections import defaultdict
+from typing import Iterable, Dict, Any
+import pandas as pd
+
+BASE_COLS = (
+    "brand_name",
+    "country",
+    "form",
+    "formulation",
+    "price_id",
+)
+
+METRIC_COLS = (
+    "price",
+    "exchange_rate",
+    "target_currency",
+    "cost_per_unit",
+    "cost_per_strength_unit",
+)
+
+
+def validate_df(
+    df: pd.DataFrame,
+    *,
+    base_columns: Iterable[str] = BASE_COLS,
+    allowed_metrics: Iterable[str] = METRIC_COLS,
+) -> Dict[str, Any]:
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame")
+
+    year_col_pattern = re.compile(r"^(?P<year>\d{4})-(?P<metric>.+)$")
+
+    base_columns = set(base_columns)
+    allowed_metrics = set(allowed_metrics)
+
+    errors = {
+        "unknown_columns": [],
+        "malformed_columns": [],
+        "invalid_years": [],
+        "invalid_metrics": [],
+        "missing_metrics_by_year": {},
+    }
+
+    seen_by_year = defaultdict(set)
+    observed_years = set()
+
+    for col in df.columns:
+        # base columns
+        if col in base_columns:
+            continue
+
+        match = year_col_pattern.match(col)
+        if not match:
+            errors["malformed_columns"].append(col)
+            continue
+
+        year = int(match.group("year"))
+        metric = match.group("metric")
+
+        if metric not in allowed_metrics:
+            errors["invalid_metrics"].append(col)
+            continue
+
+        observed_years.add(year)
+        seen_by_year[year].add(metric)
+
+    years_to_check = sorted(observed_years)
+
+    for year in years_to_check:
+        missing = allowed_metrics - seen_by_year.get(year, set())
+        if missing:
+            errors["missing_metrics_by_year"][year] = sorted(missing)
+
+    errors = {k: v for k, v in errors.items() if v}
+
+    return errors
+
+
 def load_or_build_long_table():
     df = load("long_data_table")
     if not df.empty:
@@ -41,6 +120,12 @@ def load_or_build_long_table():
         data = pd.read_excel(file)
         data.to_pickle(df_path)
     data.columns = data.columns.str.lower()
+    errors = validate_df(df)
+    if errors:
+        _ = ""
+        for k, v in errors.items():
+            _ += f"{k.replace('_',' ').title()}: {v}\n"
+        return _
     data = data.rename(
         columns=lambda c: (
             f"{c.split('-', 1)[1]}-{c.split('-', 1)[0]}"
@@ -48,17 +133,11 @@ def load_or_build_long_table():
             else c
         )
     )
-    id_cols = ["brand_name", "country", "form", "formulation", "price_id"]
+    id_cols = list(BASE_COLS)
     long_df = (
         pd.wide_to_long(
             data,
-            stubnames=[
-                "price",
-                "exchange_rate",
-                "target_currency",
-                "cost_per_unit",
-                "cost_per_strength_unit",
-            ],
+            stubnames=list(METRIC_COLS),
             i=id_cols,
             j="year",
             sep="-",
@@ -119,6 +198,8 @@ def get_processed_data(refresh=False):
         file = f"./{data_root}/data.xlsx"
         df_path = f"./{data_root}/data.pickle"
         df = load_or_build_long_table()
+        if isinstance(df, str):
+            return str
         df.drop(columns=["price_id", "formulation"], inplace=True, errors="ignore")
         ppp_2020_2023 = f"./{data_root}/ppp_2020_2023.xlsx"
         ppp_2020_2023_data = pd.read_excel(ppp_2020_2023)
