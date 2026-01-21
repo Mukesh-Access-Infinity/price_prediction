@@ -13,6 +13,25 @@ reference_bucket = [
     "Switzerland",
     "United States of America",
 ]
+
+# Default gross-to-net (GTN) assumptions by market (fractions)
+DEFAULT_GTN_BY_COUNTRY = {
+    "united kingdom": 0.40,
+    "france": 0.35,
+    "germany": 0.25,
+    "italy": 0.50,
+    "canada": 0.40,
+    "japan": 0.20,
+    "denmark": 0.25,
+    "switzerland": 0.25,
+}
+
+PPP_RATIONALE = (
+    "Prices were adjusted using OECD health-specific purchasing power parities to "
+    "reflect differences in healthcare input costs across countries. Health PPPs were "
+    "selected as the base case to avoid distortion from non-health consumption baskets. "
+    "GDP PPP was explored in sensitivity analyses."
+)
 data_root = "./data"
 os.makedirs(data_root, exist_ok=True)
 
@@ -49,6 +68,146 @@ METRIC_COLS = (
     "cost_per_unit",
     "cost_per_strength_unit",
 )
+
+
+def compute_second_lowest(values: pd.Series) -> float:
+    """
+    Return the second-lowest value; if fewer than two entries, return the min.
+    This is the GENEROUS model formula for MFN pricing.
+    """
+    clean = values.dropna()
+    if clean.empty:
+        return float("nan")
+    if len(clean) == 1:
+        return float(clean.min())
+    return float(clean.nsmallest(2).max())
+
+
+def estimate_mfn_custom_product(
+    market_prices: Dict[str, float],
+    exchange_rates: Dict[str, float],
+    ppp_rates: Dict[str, float],
+    gtn_map: Dict[str, float] = None,
+    apply_gtn: bool = False,
+) -> Dict[str, Any]:
+    """
+    Estimate MFN price for a custom product using GENEROUS model (second-lowest PPP).
+    
+    Args:
+        market_prices: Dict of {country: local_currency_price}
+        exchange_rates: Dict of {country: exchange_rate_to_usd}
+        ppp_rates: Dict of {country: ppp_rate}
+        gtn_map: Dict of {country: gtn_fraction} for gross-to-net conversion
+        apply_gtn: Whether to apply GTN conversion
+    
+    Returns:
+        Dict with:
+        - usd_prices: {country: usd_price}
+        - ppp_prices: {country: ppp_price}
+        - net_prices: {country: net_ppp_price} (if apply_gtn)
+        - mfn_price: second_lowest_ppp_price
+        - net_mfn_price: second_lowest_net_ppp_price (if apply_gtn)
+        - markets_used: list of countries with valid data
+    """
+    if gtn_map is None:
+        gtn_map = {}
+    
+    result = {
+        "usd_prices": {},
+        "ppp_prices": {},
+        "net_prices": {},
+        "markets_used": [],
+    }
+    
+    # Calculate USD and PPP prices
+    for country, local_price in market_prices.items():
+        country_lower = country.lower()
+        
+        if country_lower not in exchange_rates or country_lower not in ppp_rates:
+            continue
+        
+        ex_rate = exchange_rates[country_lower]
+        ppp_rate = ppp_rates[country_lower]
+        
+        if ex_rate <= 0 or ppp_rate <= 0:
+            continue
+        
+        usd_price = local_price * ex_rate
+        ppp_price = local_price / ppp_rate
+        
+        result["usd_prices"][country] = usd_price
+        result["ppp_prices"][country] = ppp_price
+        result["markets_used"].append(country)
+        
+        # Apply GTN if enabled
+        if apply_gtn and country_lower in gtn_map:
+            gtn_factor = 1.0 - gtn_map[country_lower]
+            net_price = ppp_price * gtn_factor
+            result["net_prices"][country] = net_price
+    
+    # Calculate MFN as second-lowest PPP price
+    if len(result["ppp_prices"]) >= 1:
+        ppp_values = list(result["ppp_prices"].values())
+        if len(ppp_values) >= 2:
+            result["mfn_price"] = sorted(ppp_values)[1]
+        else:
+            result["mfn_price"] = min(ppp_values)
+    else:
+        result["mfn_price"] = None
+    
+    # Calculate net MFN if GTN applied
+    if apply_gtn and len(result["net_prices"]) >= 1:
+        net_values = list(result["net_prices"].values())
+        if len(net_values) >= 2:
+            result["net_mfn_price"] = sorted(net_values)[1]
+        else:
+            result["net_mfn_price"] = min(net_values)
+    else:
+        result["net_mfn_price"] = None
+    
+    return result
+
+
+def apply_gtn(df: pd.DataFrame, gtn_map: dict) -> pd.DataFrame:
+    """
+    Apply country-level GTN rates to derive net prices and recompute MFN on net PPP.
+
+    Adds columns:
+    - net_cost_per_unit
+    - net_usd_price_per_unit
+    - net_ppp_price_per_unit
+    - net_ppp_price
+    - net_mfn_price
+    """
+
+    if df.empty:
+        return df
+
+    gtn_series = df["country"].str.lower().map(gtn_map).fillna(0.0)
+    factor = 1.0 - gtn_series
+
+    result = df.copy()
+
+    if "cost_per_unit" in result:
+        result["net_cost_per_unit"] = result["cost_per_unit"] * factor
+
+    if "usd_price_per_unit" in result:
+        result["net_usd_price_per_unit"] = result["usd_price_per_unit"] * factor
+
+    if "ppp_price_per_unit" in result:
+        result["net_ppp_price_per_unit"] = result["ppp_price_per_unit"] * factor
+
+    if "ppp_price" in result:
+        result["net_ppp_price"] = result["ppp_price"] * factor
+
+    # Recompute MFN using net PPP price
+    if "net_ppp_price" in result:
+        result["net_mfn_price"] = (
+            result.groupby(["year", "brand_name"])["net_ppp_price"]
+            .transform(compute_second_lowest)
+        )
+
+    return result
 
 
 def validate_df(
