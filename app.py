@@ -1,8 +1,18 @@
 import streamlit as st
 import pandas as pd
 import io
+import json
 from datetime import datetime
-from utils import get_processed_data, unroll_agg
+from utils import (
+    get_processed_data,
+    unroll_agg,
+    apply_gtn,
+    DEFAULT_GTN_BY_COUNTRY,
+    PPP_RATIONALE,
+    reference_bucket,
+    estimate_mfn_custom_product,
+    load,
+)
 from typing import Optional
 
 # Page configuration
@@ -120,6 +130,34 @@ st.markdown(
 )
 
 
+# Initialize session state for GTN toggle and custom GTN values
+if "gtn_enabled" not in st.session_state:
+    st.session_state.gtn_enabled = False
+if "custom_gtn_values" not in st.session_state:
+    st.session_state.custom_gtn_values = DEFAULT_GTN_BY_COUNTRY.copy()
+if "wac_prices" not in st.session_state:
+    st.session_state.wac_prices = {}  # Format: {(brand, country, pack): wac_value}
+if "custom_exchange_rates" not in st.session_state:
+    st.session_state.custom_exchange_rates = {}
+if "custom_ppp_rates" not in st.session_state:
+    st.session_state.custom_ppp_rates = {}
+if "selected_brands" not in st.session_state:
+    st.session_state.selected_brands = []  # Support multiple brands
+if "additional_markets_data" not in st.session_state:
+    st.session_state.additional_markets_data = {}
+
+# Version counters for widget key versioning (enables proper reset)
+if "gtn_version" not in st.session_state:
+    st.session_state.gtn_version = 0
+if "fx_version" not in st.session_state:
+    st.session_state.fx_version = 0
+if "ppp_version" not in st.session_state:
+    st.session_state.ppp_version = 0
+if "additional_markets_version" not in st.session_state:
+    st.session_state.additional_markets_version = 0
+
+
+
 # Load data once at startup
 @st.cache_data
 def get_data():
@@ -136,10 +174,20 @@ def fetch_filter_options():
     try:
         data = get_data()
         brands = sorted(set([item["Brand Name"] for item in data]))
-        return {"brands": brands}
+        countries = sorted(set([item["Country"] for item in data]))
+        return {
+            "brands": brands,
+            "countries": countries,
+            "assumptions": {
+                "sources": {"pack_prices": "NURO", "ppp": "OECD/WHO"},
+                "ppp_rationale": PPP_RATIONALE,
+                "gtn_defaults": DEFAULT_GTN_BY_COUNTRY,
+                "reference_basket": reference_bucket,
+            },
+        }
     except Exception as e:
         st.error(f"Failed to fetch filter options: {str(e)}")
-        return {"brands": []}
+        return {"brands": [], "countries": [], "assumptions": {}}
 
 
 @st.cache_data
@@ -192,24 +240,77 @@ def fetch_countries_for_packs(brand: str, packs: list):
         return []
 
 
+def apply_gtn_to_agg(agg_data: list, gtn_map: dict) -> list:
+    """Apply GTN to aggregated data by converting to long, applying GTN, and reconstructing."""
+    df = unroll_agg(agg_data)
+    if df.empty:
+        return agg_data
+    
+    # Create net price columns
+    for col in ["cost_per_unit", "usd_price_per_unit", "ppp_price_per_unit", "ppp_price"]:
+        if col in df.columns:
+            gtn_series = df["country"].str.lower().map(gtn_map).fillna(0.0)
+            factor = 1.0 - gtn_series
+            df[f"net_{col}"] = df[col] * factor
+    
+    # Recompute MFN on gross PPP (original)
+    if "ppp_price" in df.columns:
+        df["mfn_price"] = df.groupby(["year", "brand_name"])["ppp_price"].transform(
+            lambda x: x.nsmallest(2).max() if len(x.dropna()) >= 1 else float("nan")
+        )
+    
+    # Recompute MFN on net PPP (new)
+    if "net_ppp_price" in df.columns:
+        df["net_mfn_price"] = df.groupby(["year", "brand_name"])["net_ppp_price"].transform(
+            lambda x: x.nsmallest(2).max() if len(x.dropna()) >= 1 else float("nan")
+        )
+    
+    # Reconstruct aggregated format
+    result = []
+    for (brand, country, form), g in df.groupby(["brand_name", "country", "form"], sort=False):
+        year_dict = {}
+        for _, row in g.iterrows():
+            year = int(row["year"])
+            year_dict[year] = {
+                "Cost Per Unit Local": row.get("cost_per_unit"),
+                "Cost Per Unit USD": row.get("usd_price_per_unit"),
+                "Cost Per Unit PPP": row.get("ppp_price_per_unit"),
+                "MFN Price USD": row.get("mfn_price"),
+                "Net Cost Per Unit USD": row.get("net_usd_price_per_unit"),
+                "Net PPP Price": row.get("net_ppp_price_per_unit"),
+                "Net MFN Price": row.get("net_mfn_price"),
+            }
+        result.append(
+            {
+                "Brand Name": brand,
+                "Country": country.title(),
+                "Pack": form,
+                "Year": year_dict,
+            }
+        )
+    return result
+
+
 def fetch_data(
-    brand: Optional[str] = None,
+    brands: Optional[list] = None,
     countries: Optional[list] = None,
     packs: Optional[list] = None,
-):
-    """Fetch and filter data for a specific brand"""
+    apply_gtn_flag: bool = False,
+    wac_map: Optional[dict] = None,
+) -> dict:
+    """Fetch and filter data for one or more brands"""
     try:
         all_data = get_data()
 
-        if not brand:
+        if not brands or len(brands) == 0:
             return {
                 "table1": pd.DataFrame(),
                 "table2": pd.DataFrame(),
                 "table3": pd.DataFrame(),
             }
 
-        # Filter data for selected brand
-        brand_data = [item for item in all_data if item["Brand Name"] == brand]
+        # Filter data for selected brands (support multiple)
+        brand_data = [item for item in all_data if item["Brand Name"] in brands]
 
         if not brand_data:
             return {
@@ -217,6 +318,22 @@ def fetch_data(
                 "table2": pd.DataFrame(),
                 "table3": pd.DataFrame(),
             }
+
+        # Apply user-entered exchange rate overrides (recompute USD values from local)
+        if st.session_state.custom_exchange_rates:
+            for item in brand_data:
+                country_key = item["Country"].lower()
+                ex_override = st.session_state.custom_exchange_rates.get(country_key)
+                if ex_override is None:
+                    continue
+                for year, metrics in item["Year"].items():
+                    local_val = metrics.get("Cost Per Unit Local")
+                    if local_val is not None:
+                        metrics["Cost Per Unit USD"] = local_val * ex_override
+
+        # Apply GTN if enabled
+        if apply_gtn_flag:
+            brand_data = apply_gtn_to_agg(brand_data, st.session_state.custom_gtn_values)
 
         # Collect all years to ensure consistent columns
         all_years = set()
@@ -242,6 +359,7 @@ def fetch_data(
         us_rows_by_pack = {}
 
         for item in brand_data:
+            brand_name = item["Brand Name"]
             country = item["Country"]
             pack = item["Pack"]
             year_data = item["Year"]
@@ -251,11 +369,11 @@ def fetch_data(
             pack_filter_match = not packs or pack in packs
 
             # Prepare row for table 1
-            row1 = {"Country": country, "Pack": pack}
+            row1 = {"Brand": brand_name, "Country": country, "Pack": pack}
             # Prepare row for table 2
-            row2 = {"Country": country, "Pack": pack}
+            row2 = {"Brand": brand_name, "Country": country, "Pack": pack}
             # Prepare row for table 3
-            row3 = {"Country": country, "Pack": pack}
+            row3 = {"Brand": brand_name, "Country": country, "Pack": pack}
 
             for year in all_years:
                 metrics = year_data.get(year, {})
@@ -265,16 +383,46 @@ def fetch_data(
                         "Cost Per Unit Local", None
                     )
                     row1[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
+                    if apply_gtn_flag:
+                        row1[(year, "Net USD Price")] = metrics.get(
+                            "Net Cost Per Unit USD", None
+                        )
 
                     # Table 2 columns
                     row2[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
                     row2[(year, "PPP Adjusted Price")] = metrics.get(
                         "Cost Per Unit PPP", None
                     )
+                    if apply_gtn_flag:
+                        row2[(year, "Net PPP Price")] = metrics.get(
+                            "Net PPP Price", None
+                        )
                 else:
-                    # Table 3 columns
+                    # Table 3 columns (US - MFN)
                     row3[(year, "USD Price")] = metrics.get("Cost Per Unit USD", None)
                     row3[(year, "MFN Price")] = metrics.get("MFN Price USD", None)
+                if apply_gtn_flag:
+                    row3[(year, "Net MFN Price")] = metrics.get("Net MFN Price", None)
+                    
+                    # Add WAC and differential if available
+                    if wac_map:
+                        wac_key = (brand_name.lower(), pack.lower())
+                        if wac_key in wac_map:
+                            wac_val = wac_map[wac_key]
+                            row3[(year, "WAC Price")] = wac_val
+                            
+                            # Calculate differential % (MFN vs WAC)
+                            mfn_val = metrics.get("MFN Price USD")
+                            if mfn_val and wac_val and wac_val > 0:
+                                diff_pct = ((mfn_val - wac_val) / wac_val) * 100
+                                row3[(year, "MFN vs WAC %")] = diff_pct
+                            
+                            # If GTN enabled, also calc net differential (using net MFN)
+                            if apply_gtn_flag:
+                                net_mfn = metrics.get("Net MFN Price")
+                                if net_mfn and wac_val and wac_val > 0:
+                                    net_diff_pct = ((net_mfn - wac_val) / wac_val) * 100
+                                    row3[(year, "Net vs WAC %")] = net_diff_pct
             if country.lower() != "united states of america":
                 if country_filter_match and pack_filter_match:
                     table1_rows.append(row1)
@@ -302,7 +450,7 @@ def fetch_data(
         df3 = pd.DataFrame(table3_rows)
 
         # Separate basic columns from year columns
-        basic_cols = ["Country", "Pack"]
+        basic_cols = ["Brand", "Country", "Pack"]
 
         # Create proper multi-index for table 1
         if not df1.empty:
@@ -335,10 +483,19 @@ def fetch_data(
         }
 
 
-def export_to_excel(brand, countries=None, packs=None):
-    """Generate Excel export"""
+def export_to_excel(brands, countries=None, packs=None, include_gtn=False, gtn_map=None, wac_map=None):
+    """Generate Excel export for one or more brands"""
+    if gtn_map is None:
+        gtn_map = DEFAULT_GTN_BY_COUNTRY
+    if wac_map is None:
+        wac_map = {}
+    
+    # Ensure brands is a list
+    if isinstance(brands, str):
+        brands = [brands]
+    
     try:
-        result = fetch_data(brand=brand, countries=countries, packs=packs)
+        result = fetch_data(brands=brands, countries=countries, packs=packs, apply_gtn_flag=include_gtn, wac_map=wac_map)
 
         # Create Excel file with all tables
         output = io.BytesIO()
@@ -374,11 +531,38 @@ def export_to_excel(brand, countries=None, packs=None):
                         f"{col[0]} - {col[1]}" if col[0] else col[1]
                         for col in df3.columns
                     ]
-                df3.to_excel(writer, index=False, sheet_name="US - MFN")
+                df3.to_excel(writer, index=False, sheet_name="US - MFN with WAC")
+
+            # Write Assumptions
+            assumptions_rows = [
+                ["Pack prices source", "NURO"],
+                ["PPP source", "OECD/WHO"],
+                ["PPP rationale", PPP_RATIONALE],
+                ["Reference basket", ", ".join(reference_bucket)],
+                ["GTN applied", str(include_gtn)],
+            ]
+            
+            # Add custom GTN values if applied
+            if include_gtn and gtn_map:
+                for country, rate in sorted(gtn_map.items()):
+                    assumptions_rows.append([f"GTN% - {country.title()}", f"{rate * 100:.1f}%"])
+            elif not include_gtn:
+                assumptions_rows.append(["GTN% - (Not Applied)", "-"])
+            
+            # Add WAC values if provided
+            if wac_map:
+                assumptions_rows.append(["", ""])  # Blank row
+                for (brand_key, pack_key), wac_val in sorted(wac_map.items()):
+                    assumptions_rows.append([f"WAC - {brand_key} / {pack_key}", f"${wac_val:.2f}"])
+
+            pd.DataFrame(assumptions_rows, columns=["Item", "Value"]).to_excel(
+                writer, index=False, sheet_name="Assumptions"
+            )
 
         output.seek(0)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return output.getvalue(), f"price_data_{brand}_{timestamp}.xlsx"
+        brand_names = "_".join(brands) if len(brands) <= 2 else f"{len(brands)}_brands"
+        return output.getvalue(), f"price_data_{brand_names}_{timestamp}.xlsx"
     except Exception as e:
         st.error(f"Export failed: {str(e)}")
         return None, None
@@ -443,107 +627,548 @@ def main():
         unsafe_allow_html=True,
     )
 
+    # Apply any pending reset flags BEFORE widgets are instantiated
+    # (Reset flags removed - now handled directly in button callbacks)
+
     # Fetch filter options
     filter_options = fetch_filter_options()
 
     with st.container():
-        col1, col2 = st.columns([3, 1])
+        col1, col2, col3 = st.columns([2, 1, 1])
 
         with col1:
             st.markdown(
                 """
-            <h3 style='margin: 0 0 1rem 0; color: #1e293b; font-weight: 700;'>Select Brand</h3>
+            <h5 style='margin: 0 0 1rem 0; color: #1e293b; font-weight: 700;'>Select Brand(s)</h5>
             """,
                 unsafe_allow_html=True,
             )
 
-            # Single select dropdown for brand
-            selected_brand = st.selectbox(
-                label="Choose a brand to view data",
-                options=[""] + filter_options.get("brands", []),
-                index=0,
-                placeholder="Select a brand...",
+            # Multiple select dropdown for brands
+            selected_brands = st.multiselect(
+                label="Choose brand(s) to view data",
+                options=filter_options.get("brands", []),
+                placeholder="Select one or more brands...",
                 label_visibility="collapsed",
-                key="selected_brand",
+                key="selected_brands_input",
             )
+            # For backward compatibility with single brand logic
+            selected_brand = selected_brands[0] if selected_brands else None
 
         with col2:
             st.markdown(
                 """
-            <br>
-            <br>
-            <br>
+            <h3 style='margin: 0 0 1rem 0; color: #1e293b; font-weight: 700; font-size: 14px;'>Markets</h3>
             """,
                 unsafe_allow_html=True,
             )
-            if st.button(
-                "Export to Excel", use_container_width=True, disabled=not selected_brand
-            ):
-                if selected_brand:
-                    with st.spinner("Generating Excel file..."):
-                        # Get current filter values for export
-                        countries = st.session_state.get("selected_countries", None)
-                        packs = st.session_state.get("selected_packs", None)
-                        excel_data, filename = export_to_excel(
-                            selected_brand, countries, packs
-                        )
-                        if excel_data:
-                            st.download_button(
-                                label="Download File",
-                                data=excel_data,
-                                file_name=filename,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True,
-                            )
-                            st.success("Excel file ready for download!")
+            all_country_options = filter_options.get("countries", [])
+            if st.session_state.additional_markets_data:
+                all_country_options = sorted(
+                    set(all_country_options)
+                    | {m.title() for m in st.session_state.additional_markets_data.keys()}
+                )
 
-    # Additional filters for Country and Pack (only show when brand is selected)
+            preset_selection = st.session_state.get("selected_countries_filter", [])
+
+            # if st.button("Clear markets", key="clear_markets_btn"):
+            #     preset_selection = []
+            #     st.session_state.selected_countries_filter = []
+            #     st.rerun()
+
+            selected_countries = st.multiselect(
+                label="Filter by countries",
+                options=all_country_options,
+                default=preset_selection,
+                placeholder="All markets",
+                label_visibility="collapsed",
+                key="selected_countries_filter",
+            )
+
+        with col3:
+            st.markdown(
+                """
+            <h3 style='margin: 0 0 1rem 0; color: #1e293b; font-weight: 700; font-size: 14px;'>Settings</h3>
+            """,
+                unsafe_allow_html=True,
+            )
+            st.session_state.gtn_enabled = st.toggle(
+                "Apply GTN",
+                value=st.session_state.gtn_enabled,
+                help="Show net prices (gross to net) alongside gross prices",
+            )
+
+    # GTN % Editor (only show when GTN enabled)
+    if st.session_state.gtn_enabled:
+        with st.expander("Edit GTN% by Market", expanded=False):
+            st.markdown(
+                "Adjust gross-to-net percentages per market (override defaults). "
+                "Enter as percentage (e.g., 40 for 40%)."
+            )
+
+            # Create columns for market inputs (3 per row)
+            markets = list(DEFAULT_GTN_BY_COUNTRY.keys())
+            cols_per_row = 3
+            num_rows = (len(markets) + cols_per_row - 1) // cols_per_row
+
+            for row_idx in range(num_rows):
+                cols = st.columns(cols_per_row)
+                for col_idx, col in enumerate(cols):
+                    market_idx = row_idx * cols_per_row + col_idx
+                    if market_idx < len(markets):
+                        market = markets[market_idx]
+                        # Always use DEFAULT as the source of truth, not session_state
+                        default_from_constant = DEFAULT_GTN_BY_COUNTRY.get(market, 0) * 100
+                        with col:
+                            val = st.number_input(
+                                label=market.title(),
+                                value=default_from_constant,
+                                min_value=0.0,
+                                max_value=100.0,
+                                step=0.1,
+                                format="%.2f",
+                                key=f"gtn_input_{market}_{st.session_state.gtn_version}",
+                                help=f"GTN% for {market.title()}",
+                            )
+                            # Store as fraction (0.0 to 1.0)
+                            st.session_state.custom_gtn_values[market] = val / 100.0
+
+            # Reset button
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("Reset to Defaults", key="reset_gtn_btn"):
+                    st.session_state.custom_gtn_values = DEFAULT_GTN_BY_COUNTRY.copy()
+                    st.session_state.gtn_version += 1
+                    st.rerun()
+
+    # Additional Markets Support
+    with st.expander("Add Additional Markets (Beyond GENEROUS)", expanded=False):
+        st.markdown(
+            "Add additional countries for MFN estimation beyond the 8 GENEROUS reference markets. "
+            "This expands the pricing basket for more comprehensive analysis."
+        )
+        
+        additional_market_name = st.text_input(
+            "Country/Market Name",
+            placeholder="e.g., Australia, Mexico",
+            key="additional_market_input"
+        ).strip()
+        
+        if additional_market_name:
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                exchange_rate = st.number_input(
+                    "Exchange Rate (to USD)",
+                    value=1.0,
+                    step=0.000001,
+                    format="%.6f",
+                    key=f"ex_rate_{additional_market_name}"
+                )
+            with col2:
+                ppp_rate = st.number_input(
+                    "PPP Rate",
+                    value=1.0,
+                    step=0.000001,
+                    format="%.6f",
+                    key=f"ppp_{additional_market_name}"
+                )
+            with col3:
+                st.markdown("")  # Spacing
+                if st.button("Add Market", key=f"add_market_{additional_market_name}"):
+                    normalized_name = additional_market_name.title()
+                    st.session_state.additional_markets_data[normalized_name] = {
+                        "exchange_rate": exchange_rate,
+                        "ppp_rate": ppp_rate
+                    }
+                    st.success(f"Added {normalized_name}")
+                    st.rerun()
+        
+        # Display added markets
+        if st.session_state.additional_markets_data:
+            st.markdown("**Added Markets:**")
+            for market, data in st.session_state.additional_markets_data.items():
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+                with col1:
+                    st.write(f"{market}")
+                with col2:
+                    st.write(f"Ex Rate: {data['exchange_rate']:.2f}")
+                with col3:
+                    st.write(f"PPP: {data['ppp_rate']:.4f}")
+                with col4:
+                    if st.button("❌", key=f"remove_{market}", help=f"Remove {market}"):
+                        del st.session_state.additional_markets_data[market]
+                        st.rerun()
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button("Clear All", key="clear_additional_markets"):
+                    st.session_state.additional_markets_data = {}
+                    st.session_state.additional_markets_version += 1
+                    st.rerun()
+
+    # Conversion Rates Editor (always show for sensitivity analysis)
+    with st.expander("Edit Exchange Rates (Sensitivity Analysis)", expanded=False):
+        st.markdown(
+            "Adjust exchange rates (LCU to USD) for sensitivity analysis. Leave blank to use default rates."
+        )
+
+        # Load default exchange rates from processed data
+        try:
+            processed_data = load("processed_price_data")
+            if not processed_data.empty:
+                default_rates = processed_data.groupby("country")["exchange_rate"].first().to_dict()
+            else:
+                default_rates = {}
+        except:
+            default_rates = {}
+
+        # Create columns for market inputs (3 per row)
+        markets_base = [c.lower() for c in selected_countries] if selected_countries else reference_bucket
+        markets_extra = [m.lower() for m in st.session_state.additional_markets_data.keys()]
+        markets = sorted(set(markets_base) | set(markets_extra))
+        cols_per_row = 3
+        num_rows = (len(markets) + cols_per_row - 1) // cols_per_row
+
+        for row_idx in range(num_rows):
+            cols = st.columns(cols_per_row)
+            for col_idx, col in enumerate(cols):
+                market_idx = row_idx * cols_per_row + col_idx
+                if market_idx < len(markets):
+                    market = markets[market_idx]
+                    market_lower = market.lower()
+                    # Always use data default as source of truth
+                    data_default = default_rates.get(market_lower, 1.0)
+                    with col:
+                        val = st.number_input(
+                            label=f"{market.title()} to USD",
+                            value=data_default,
+                            step=0.000001,
+                            format="%.6f",
+                            key=f"ex_rate_input_{market_lower}_{st.session_state.fx_version}",
+                            help=f"Exchange rate for {market.title()}",
+                        )
+                        # Store if different from default (use tolerance for float comparison)
+                        if abs(val - data_default) > 0.0001:
+                            st.session_state.custom_exchange_rates[market_lower] = val
+                        elif market_lower in st.session_state.custom_exchange_rates:
+                            del st.session_state.custom_exchange_rates[market_lower]
+
+        # Reset button
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("Reset Rates to Defaults", key="reset_ex_rates_btn"):
+                st.session_state.custom_exchange_rates = {}
+                st.session_state.fx_version += 1
+                st.rerun()
+
+    # PPP Values Editor (always show for sensitivity analysis)
+    with st.expander("Edit PPP Values (Sensitivity Analysis)", expanded=False):
+        st.markdown(
+            "Adjust health-specific PPP rates for sensitivity analysis. Leave blank to use default values."
+        )
+
+        # Load default PPP rates from processed data
+        try:
+            ppp_data = load("ppp_2020_2023")
+            if not ppp_data.empty and "2023" in ppp_data.columns:
+                default_ppp = ppp_data.set_index("country")["2023"].to_dict()
+            else:
+                default_ppp = {}
+        except:
+            default_ppp = {}
+
+        # Create columns for market inputs (3 per row)
+        markets_base = [c.lower() for c in selected_countries] if selected_countries else reference_bucket
+        markets_extra = [m.lower() for m in st.session_state.additional_markets_data.keys()]
+        markets = sorted(set(markets_base) | set(markets_extra))
+        cols_per_row = 3
+        num_rows = (len(markets) + cols_per_row - 1) // cols_per_row
+
+        for row_idx in range(num_rows):
+            cols = st.columns(cols_per_row)
+            for col_idx, col in enumerate(cols):
+                market_idx = row_idx * cols_per_row + col_idx
+                if market_idx < len(markets):
+                    market = markets[market_idx]
+                    market_lower = market.lower()
+                    # Always use data default as source of truth
+                    data_default = default_ppp.get(market_lower, 1.0)
+                    with col:
+                        val = st.number_input(
+                            label=f"{market.title()} PPP",
+                            value=data_default,
+                            step=0.000001,
+                            format="%.6f",
+                            key=f"ppp_input_{market_lower}_{st.session_state.ppp_version}",
+                            help=f"Health PPP rate for {market.title()}",
+                        )
+                        # Store if different from default (use tolerance for float comparison)
+                        if abs(val - data_default) > 0.0001:
+                            st.session_state.custom_ppp_rates[market_lower] = val
+                        elif market_lower in st.session_state.custom_ppp_rates:
+                            del st.session_state.custom_ppp_rates[market_lower]
+
+        # Reset button
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("Reset PPP to Defaults", key="reset_ppp_btn"):
+                st.session_state.custom_ppp_rates = {}
+                st.session_state.ppp_version += 1
+                st.rerun()
+
+    # Display assumptions panel
+    if filter_options.get("assumptions"):
+        st.markdown(
+            """
+        <div style='background: white;
+                    padding: 1.5rem;
+                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+                    margin: 1rem 0;'>
+            <h4 style='color: #1e293b; font-weight: 700; margin-top: 0;'>Assumptions & Sources</h4>
+        """,
+            unsafe_allow_html=True,
+        )
+
+        assumptions = filter_options["assumptions"]
+        st.write(
+            f"**Sources:** Pack prices from {assumptions['sources'].get('pack_prices', 'NURO')}; "
+            f"PPP from {assumptions['sources'].get('ppp', 'OECD/WHO')}"
+        )
+        st.write(f"**PPP Rationale:** {assumptions['ppp_rationale']}")
+        
+        # Add MFN Formula Visualization
+        st.markdown("**MFN Estimation (GENEROUS Model):**")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.info(
+                "**MFN Price = 2nd Lowest PPP-Adjusted Price**\n\n"
+                "1. Convert local currency prices to USD using exchange rates\n"
+                "2. Adjust to PPP terms using health-specific purchasing power parities\n"
+                "3. Select 2nd lowest value across ≥5 markets (GENEROUS reference basket)"
+            )
+        
+        st.write(
+            f"**Reference Basket (GENEROUS):** {', '.join(assumptions['reference_basket'])} — "
+            f"minimum 5 markets required for valid MFN estimation"
+        )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # Custom Product Price Input Section
+    with st.expander("Estimate MFN for Custom Product", expanded=False):
+        st.markdown(
+            "Enter local currency prices for your product across multiple markets to estimate MFN price using GENEROUS model (2nd lowest)."
+        )
+
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            custom_product_name = st.text_input(
+                "Product Name (optional)",
+                placeholder="e.g., My Drug Product",
+                key="custom_product_name"
+            )
+
+        with col2:
+            st.markdown("")  # Spacing for alignment
+            if st.button("View Assumptions", key="view_assumptions_custom"):
+                st.info(
+                    f"**Exchange Rates & PPP Rates:**\n\n"
+                    f"Use the editable sections above (Exchange Rates and PPP Values) "
+                    f"to override default values for sensitivity analysis."
+                )
+
+        st.markdown("**Enter Local Currency Prices by Market:**")
+        
+        # Create columns for input
+        custom_prices = {}
+        markets_base = [c.lower() for c in selected_countries] if selected_countries else [m.lower() for m in reference_bucket if m.lower() != "united states of america"]
+        markets_extra = [m.lower() for m in st.session_state.additional_markets_data.keys() if m.lower() != "united states of america"]
+        markets_for_custom = sorted(set(markets_base) | set(markets_extra))
+        
+        cols_per_row = 2
+        num_rows = (len(markets_for_custom) + cols_per_row - 1) // cols_per_row
+
+        for row_idx in range(num_rows):
+            cols = st.columns(cols_per_row)
+            for col_idx, col in enumerate(cols):
+                market_idx = row_idx * cols_per_row + col_idx
+                if market_idx < len(markets_for_custom):
+                    market = markets_for_custom[market_idx]
+                    with col:
+                        price = st.number_input(
+                            label=f"{market.title()} (Local Currency)",
+                            value=0.0,
+                            min_value=0.0,
+                            step=0.01,
+                            key=f"custom_price_{market}",
+                            help=f"Enter local currency price for {market.title()}",
+                        )
+                        if price > 0:
+                            custom_prices[market] = price
+
+        # Estimate MFN button
+        if custom_prices:
+            if st.button("Estimate MFN Price", use_container_width=True, key="estimate_mfn_btn"):
+                # Get exchange rates and PPP rates (use custom or defaults)
+                try:
+                    processed_data = load("processed_price_data")
+                    ppp_data = load("ppp_2020_2023")
+                    
+                    exchange_rates = {}
+                    ppp_rates = {}
+                    
+                    # Get defaults (use additional markets overrides where present)
+                    if not processed_data.empty:
+                        for market in custom_prices.keys():
+                            default_ex = (
+                                processed_data[processed_data["country"] == market]["exchange_rate"].iloc[0]
+                                if not processed_data[processed_data["country"] == market].empty
+                                else st.session_state.additional_markets_data.get(market.title(), {}).get("exchange_rate", 1.0)
+                            )
+                            exchange_rates[market] = st.session_state.custom_exchange_rates.get(market, default_ex)
+                    
+                    if not ppp_data.empty and "2023" in ppp_data.columns:
+                        for market in custom_prices.keys():
+                            default_ppp = (
+                                ppp_data[ppp_data["country"] == market]["2023"].iloc[0]
+                                if not ppp_data[ppp_data["country"] == market].empty
+                                else st.session_state.additional_markets_data.get(market.title(), {}).get("ppp_rate", 1.0)
+                            )
+                            ppp_rates[market] = st.session_state.custom_ppp_rates.get(market, default_ppp)
+                    
+                    # Estimate MFN
+                    result = estimate_mfn_custom_product(
+                        market_prices=custom_prices,
+                        exchange_rates=exchange_rates,
+                        ppp_rates=ppp_rates,
+                        gtn_map=st.session_state.custom_gtn_values if st.session_state.gtn_enabled else None,
+                        apply_gtn=st.session_state.gtn_enabled,
+                    )
+                    
+                    # Display results
+                    st.success("MFN Estimation Complete")
+                    
+                    # Results table
+                    results_data = []
+                    for market in sorted(result["markets_used"]):
+                        results_data.append({
+                            "Market": market.title(),
+                            "Local Price": f"{custom_prices[market]:.2f}",
+                            "USD Price": f"{result['usd_prices'].get(market, 0):.2f}",
+                            "PPP Price": f"{result['ppp_prices'].get(market, 0):.2f}",
+                            "Net PPP Price": f"{result['net_prices'].get(market, '-'):.2f}" if st.session_state.gtn_enabled else "-",
+                        })
+                    
+                    results_df = pd.DataFrame(results_data)
+                    st.dataframe(results_df, use_container_width=True, hide_index=True)
+                    
+                    # MFN Summary
+                    st.markdown("---")
+                    col1, col2 = st.columns([1, 1])
+                    
+                    with col1:
+                        st.metric("Gross MFN Price (PPP)", f"${result['mfn_price']:.2f}" if result['mfn_price'] else "N/A")
+                    
+                    if st.session_state.gtn_enabled and result['net_mfn_price']:
+                        with col2:
+                            st.metric("Net MFN Price (PPP)", f"${result['net_mfn_price']:.2f}")
+                    
+                    st.info(
+                        f"**GENEROUS Model:** MFN = 2nd lowest PPP price across {len(result['markets_used'])} markets\n\n"
+                        f"**Markets Used:** {', '.join([m.title() for m in result['markets_used']])}"
+                    )
+                
+                except Exception as e:
+                    st.error(f"Failed to estimate MFN: {str(e)}")
+        else:
+            st.info("Enter at least one market price above to estimate MFN")
+
+    # Export button and GTN toggle
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        pass
+    with col2:
+        if st.button(
+            "Export to Excel", use_container_width=True, disabled=not selected_brands
+        ):
+            if selected_brands:
+                with st.spinner("Generating Excel file..."):
+                    countries = (
+                        selected_countries if selected_countries else None
+                    )
+                    packs = st.session_state.get("selected_packs", None)
+                    # Pass custom GTN values if GTN enabled
+                    gtn_values = st.session_state.custom_gtn_values if st.session_state.gtn_enabled else DEFAULT_GTN_BY_COUNTRY
+                    # Filter WAC map to only relevant brands/packs
+                    wac_filtered = {k: v for k, v in st.session_state.wac_prices.items() if k[0] in [b.lower() for b in selected_brands]}
+                    excel_data, filename = export_to_excel(
+                        selected_brands, countries, packs, st.session_state.gtn_enabled, gtn_values, wac_filtered if wac_filtered else None
+                    )
+                    if excel_data:
+                        st.download_button(
+                            label="Download",
+                            data=excel_data,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+                        st.success("Excel file ready!")
+
+    # Additional filters for Pack (only show when brand is selected)
     if selected_brand:
         brand_filters = fetch_brand_specific_filters(selected_brand)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        col1, col2 = st.columns(2)
         # Get current selections from session state for persistence
-        prev_selected_countries = st.session_state.get("selected_countries", [])
         prev_selected_packs = st.session_state.get("selected_packs", [])
 
-        with col1:
+        available_packs = (
+            fetch_packs_for_countries(selected_brand, selected_countries)
+            if selected_countries
+            else brand_filters.get("packs", [])
+        )
+        selected_packs = st.multiselect(
+            label="Select Packs (optional)",
+            options=available_packs,
+            default=[p for p in prev_selected_packs if p in available_packs],
+            placeholder="All packs",
+            key="selected_packs",
+        )
 
-            available_countries = (
-                fetch_countries_for_packs(selected_brand, prev_selected_packs)
-                if prev_selected_packs
-                else brand_filters.get("countries", [])
-            )
-            selected_countries = st.multiselect(
-                label="Select Countries",
-                options=available_countries,
-                default=[
-                    c for c in prev_selected_countries if c in available_countries
-                ],
-                placeholder="All countries",
-                key="selected_countries",
+        # WAC Price Input Section
+        with st.expander("Enter WAC Prices (optional)", expanded=False):
+            st.markdown(
+                "Enter Wholesale Acquisition Cost (WAC) per pack to compare against MFN prices."
             )
 
-        with col2:
+            # Build available packs to enter WAC for
+            packs_for_wac = selected_packs if selected_packs else available_packs
 
-            available_packs = (
-                fetch_packs_for_countries(selected_brand, selected_countries)
-                if selected_countries
-                else brand_filters.get("packs", [])
-            )
-            selected_packs = st.multiselect(
-                label="Select Packs ",
-                options=available_packs,
-                default=[p for p in prev_selected_packs if p in available_packs],
-                placeholder="All packs",
-                key="selected_packs",
-            )
+            for pack in packs_for_wac:
+                wac_key = (selected_brand.lower(), pack.lower())
+                current_wac = st.session_state.wac_prices.get(wac_key, 0.0)
+
+                wac_val = st.number_input(
+                    label=f"WAC - {pack}",
+                    value=current_wac,
+                    min_value=0.0,
+                    step=0.01,
+                    key=f"wac_input_{pack}",
+                    help=f"Enter WAC price for pack: {pack}",
+                )
+
+                if wac_val > 0:
+                    st.session_state.wac_prices[wac_key] = wac_val
+                elif wac_key in st.session_state.wac_prices:
+                    del st.session_state.wac_prices[wac_key]
+
     else:
-        selected_countries = None
         selected_packs = None
 
-    st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Data display section
@@ -564,7 +1189,9 @@ def main():
         )
     else:
         with st.spinner("Loading data..."):
-            result = fetch_data(selected_brand, selected_countries, selected_packs)
+            # Filter WAC map to only relevant brands/packs for display
+            wac_display = {k: v for k, v in st.session_state.wac_prices.items() if k[0] in [b.lower() for b in selected_brands]}
+            result = fetch_data(selected_brands, selected_countries, selected_packs, st.session_state.gtn_enabled, wac_display if wac_display else None)
 
             # Custom CSS for multi-level headers
             st.markdown(
