@@ -32,6 +32,21 @@ PPP_RATIONALE = (
     "selected as the base case to avoid distortion from non-health consumption baskets. "
     "GDP PPP was explored in sensitivity analyses."
 )
+
+# Brief explanation on how net prices are calculated from GTN
+NET_PRICE_EXPLANATION = (
+    "Net prices represent estimated post-discount prices after applying "
+    "standard country-specific gross-to-net (GTN) adjustments."
+    "The resulting net price indicates the expected realized price level."
+)
+
+# Brief explanation on how WAC differentials are calculated
+WAC_DIFFERENTIAL_EXPLANATION = (
+    "WAC differentials indicate the percentage difference between the estimated "
+    "U.S. MFN price and the Wholesale Acquisition Cost (WAC) provided by the user. "
+    "This comparison highlights whether the MFN price is above or below WAC."
+)
+
 data_root = "./data"
 os.makedirs(data_root, exist_ok=True)
 
