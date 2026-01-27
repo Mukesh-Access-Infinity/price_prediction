@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "price_prediction"
-version = "0.1.0"
+version = "0.2.0"
 description = "A small price prediction app"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,7 +17,10 @@ dependencies = [
   "streamlit>=1.52.0",
   "xlrd>=2.0.0",
   "openpyxl>=3.1.0",
-  "XlsxWriter>=3.2.5"
+  "XlsxWriter>=3.2.5",
+  "python-dotenv==1.2.1",
+  "google-genai==1.60.0",
+  "beautifulsoup4==4.14.3",
 ]
 
 
