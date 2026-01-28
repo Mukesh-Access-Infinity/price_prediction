@@ -9,7 +9,6 @@ import os
 import dotenv
 
 dotenv.load_dotenv(".env")
-client = Client(api_key=os.getenv("GOOGLE_API_KEY"))
 T = TypeVar("T")
 P = TypeVar("P")
 LLMDict: TypeAlias = dict[str, Any]
@@ -50,6 +49,7 @@ def call_llm(
 ) -> T | LLMDict | LLMStr:
     if not prompt:
         raise ValueError("Prompt cannot be empty for LLM call.")
+    client = Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
     is_list_schema = False
     validation_schema = response_schema

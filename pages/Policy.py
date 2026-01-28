@@ -290,6 +290,13 @@ def load_policy_texts() -> List[Part]:
 # ---- Load or Call LLM ----
 @st.cache_data(show_spinner=True)
 def get_policy_analysis(parts: List[Part]) -> dict:
+    import json
+    path = "policy.json"
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            existing_data = json.load(f)
+            if existing_data:
+                return existing_data
     if not parts:
         raise ValueError("No policy content available to analyze.")
     prompt = (
@@ -298,6 +305,15 @@ def get_policy_analysis(parts: List[Part]) -> dict:
     )
     response = call_llm(prompt=prompt, contents=parts, response_schema=PolicyAnalysis)
     r = PolicyAnalysis.model_validate(response)
+    with open(path, "w", encoding="utf-8") as f:
+        s = r.model_dump()
+        for k,v in s.items():
+            try:
+                val = v.strftime("%Y-%m-%d")
+                s[k] = val
+            except:
+                continue
+        json.dump(s, f, ensure_ascii=False, indent=4)
     return r.model_dump()
 
 
