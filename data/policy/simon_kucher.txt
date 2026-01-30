@@ -1,0 +1,67 @@
+What the 2026 LFSS and the 2024 CEPS activity report signal for France’s P&MA
+January 22, 2026 
+
+The pricing and market access (P&MA) environment in France is tightening. The latest LFSS and the CEPS activity report highlight rising pricing pressure, higher rebates, and more assertive enforcement.
+
+The 2026 LFSS (annual Social Security Financing Law) and the 2024 CEPS annual activity report (published in December 2025) provide insights into the evolving French P&MA environment.  
+
+Here are the key implications from both documents on the French P&MA market.
+
+What are the key insights from the 2026 LFSS?
+Increased target for healthcare expenditures
+The annual healthcare spending target (ONDAM) has increased to €274.4 billion, representing growth of 3.2% compared to 2025.
+This growth rate is unchanged from the previous year.
+Reform of the “safeguard clause” (Article 28)
+The safeguard clause is a clawback mechanism initially designed as an “exceptional” tool to regulate pharmaceutical spending when actual outturn exceeds expectations.
+However, it has been criticized for years. Its repeated activation, steadily rising amounts, and limited predictability have effectively stripped it of its “exceptional” character in practice.
+Against this backdrop, the system has been reshaped with a new tax based on each company’s turnover, while restoring the safeguard clause as an “exceptional” backstop.
+New “comparable-country” reference basket for CEPS pricing (Article 88)
+CEPS may rely on evidence of lower net prices (after rebates and taxes) in countries deemed comparable in market characteristics.
+The list of countries (potentially including non-Europeans markets such as Japan and South Korea) will be set by decree and has not yet been published.
+Extension of the “direct access” experimental access pathway (Article 88)
+The direct post-HAS experimental access or “direct access” created in 2022 enables reimbursement after the HAS Transparency Committee opinion is issued and before a standard reimbursement price is agreed. It applies to medicines that have not benefited from early access, and that were granted an SMR important and at least an ASMR IV rating on the main criteria.
+The direct post-HAS experimental access pathway has been extended for an additional two years, with the scheme’s evaluation now scheduled for no later than September 1, 2027.
+Caps on commercial discounts in community pharmacies are set by law (Article 37)
+For reimbursable specialties, the cap remains unchanged from the October 2025 adjustment: discounts and equivalent commercial advantages are limited to 2.5% of the ex-factory price per calendar year, per product line, per pharmacy.
+However, a higher statutory ceiling applies to selected categories:
+40% for generics (unchanged from October 2025), substitutable hybrid medicines, and reference products under a TFR (tarif forfaitaire de responsabilité).
+20% for biosimilars (increased from 15% to 20% compared with October 2025).
+Beyond these headline measures, several other articles in the 2026 LFSS are expected to affect manufacturers through different levers. For instance:
+
+Article 33 introduces a mechanism for advance payment of rebates on health products, to be progressively phased in through 2027.
+Article 54 establishes a preventive care pathway for patients with certain conditions that may progress to a long-term disease status (ALD).
+What are the key learnings from the latest CEPS report focusing on 2024?
+The 2024 CEPS annual report complements the Committee’s latest doctrine with several key updates:
+Pricing approaches for specific product categories:
+
+Combination therapies
+Negotiations are anchored in the overall cost of the treatment regimen, using a reference cost derived from clinically relevant comparators identified by the HAS Transparency Committee.
+Where HAS does not specify the respective contribution of individual mono-components, CEPS applies an equal value split across products to determine pricing conditions.
+Hybrid products
+The baseline launch pricing rule remains a ~30% discount on the reference net price.
+For hybrids listed in the ANSM hybrid register for which substitution is authorized (introduced in April 2024 and subsequently expanded), CEPS applies a higher, generic-like discount of ~60%.
+For both new and existing hybrid-drug agreements, the discount will increase if the reference drug is added to the substitution list.
+Additional facts and statistics from the CEPS report:
+Drug price increases are now more tightly constrained. Eligibility is narrower, and requests are more formalized (full dossier required, with some applications rejected for incomplete filings), making price uplifts harder to secure.
+In 2024, four products were granted additional value during price negotiations through the “industrial criterion” introduced under Article 65 of the 2022 LFSS. However, there is still no clarity on how this criterion will be applied now that it has been mandatory for drugs since early 2025 and extended to medical devices, likely prompting a future update to the CEPS doctrine.
+For ASMR V drugs, list price typically aligns with net price. However, a small number of  ASMR V drugs were priced with a list-to-net disconnect.
+Pricing pressure intensifies with rebates hitting record highs and continued CEPS-driven price cuts
+€7.98 billion gross contractual product discounts were invoiced to pharma companies for 2024 sales (+12% versus 2023).
+Fourteen products account for half of total rebates, with 10% of product rebate agreements representing just under 70% of total rebates.
+Most rebates are concentrated in the top 10 ATC classes (88.3%) with an average rate of 30.9%. Oncology and “other nervous system” therapies lead with a ~42% list-to-net difference.
+Price reductions set by the CEPS resulted in €856 million in savings:
+In retail, these are driven primarily by immunosuppressants, oncology, and diabetes drugs, which generated more than half of the €483 million savings from patented products.
+Hospital savings reached €215 million, with ~20% linked to price cuts within the generics and biosimilars scope. Key contributors include rituximab, bevacizumab, and tocilizumab.
+The draft LFSS 2026 had initially targeted €1.4 billion in drug price cuts, signaling expectations of continued downward price pressure.
+Challenges to CEPS decisions hit a record high
+Litigation volumes increased as CEPS logged 36 new appeals (versus 25 in 2023), the highest level since tracking was introduced.
+The safeguard clause was the main trigger, representing 44% of cases, related to disputes over amounts due.
+Pricing decisions are also increasingly challenged (eight appeals), and rebates remain one of the main pain points (11 appeals).
+Outcomes remain favorable to CEPS: only one appeal canceled a CEPS decision, with most cases rejected or withdrawn.
+Taken together, the 2026 LFSS and the 2024 CEPS activity report confirm a continuous trend toward a structurally tougher French P&MA environment – combining tighter budget governance, more sophisticated levers to reduce prices, and a continued widening gross-to-net gap. With a new framework agreement between CEPS and LEEM expected in the first half of 2026 and the impact of the US Most Favored Nation policy on French price negotiations, manufacturers should reassess their P&MA strategies to keep pace with the evolving landscape.
+
+Reach out to us today. You can speak directly to our team of experts at Simon-Kucher if you would like to discuss the implications of these developments in more detail. 
+
+ 
+
+Thanks to contributions from Jade Monteiro.

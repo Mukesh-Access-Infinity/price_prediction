@@ -436,40 +436,37 @@ def fetch_data(
                             "Net MFN Price", None
                         )
 
-                    if wac_map:
-                        wac_key = (brand_name.lower(), pack.lower())
-                        mfn_val = metrics.get("MFN Price USD", None)
-                        net_mfn = metrics.get("Net MFN Price", None)
-                        if wac_key in wac_map:
-                            wac_val = wac_map[wac_key]
-                            if mfn_val is not None and net_mfn is not None:
-                                row3[(year, "WAC Price")] = wac_val
+                    # Determine WAC value: prefer provided override, otherwise default to USD price
+                    mfn_val = metrics.get("MFN Price USD", None)
+                    net_mfn = metrics.get("Net MFN Price", None)
+                    usd_val = metrics.get("Cost Per Unit USD", None)
+                    wac_key = (brand_name.lower(), pack.lower())
 
-                            # Calculate differential % (MFN vs WAC) if MFN present
-                            if (
-                                mfn_val is not None
-                                and wac_val is not None
-                                and wac_val > 0
-                            ):
-                                diff_pct = ((mfn_val - wac_val) / wac_val) * 100
-                                row3[(year, "MFN vs WAC")] = (
-                                    f"{'+' if diff_pct > 0 else ''}{diff_pct:.2f} %"
-                                )
+                    if wac_map and wac_key in wac_map:
+                        wac_val = wac_map[wac_key]
+                    else:
+                        # Default WAC to the USD price so manual input is not required
+                        wac_val = usd_val
 
-                            # Calculate net differential if net MFN present
-                            if (
-                                net_mfn is not None
-                                and wac_val is not None
-                                and wac_val > 0
-                            ):
-                                net_diff_pct = ((net_mfn - wac_val) / wac_val) * 100
-                                row3[(year, "Net vs WAC")] = (
-                                    f"{'+' if net_diff_pct > 0 else ''}{net_diff_pct:.2f} %"
-                                )
-                        else:
-                            row3[(year, "WAC Price")] = None
-                            row3[(year, "MFN vs WAC")] = None
-                            row3[(year, "Net vs WAC")] = None
+                    row3[(year, "WAC Price")] = wac_val
+
+                    # Calculate differential % (MFN vs WAC) if MFN present
+                    if mfn_val is not None and wac_val is not None and wac_val > 0:
+                        diff_pct = ((mfn_val - wac_val) / wac_val) * 100
+                        row3[(year, "MFN vs WAC")] = (
+                            f"{'+' if diff_pct > 0 else ''}{diff_pct:.2f} %"
+                        )
+                    else:
+                        row3[(year, "MFN vs WAC")] = None
+
+                    # Calculate net differential if net MFN present
+                    if net_mfn is not None and wac_val is not None and wac_val > 0:
+                        net_diff_pct = ((net_mfn - wac_val) / wac_val) * 100
+                        row3[(year, "Net vs WAC")] = (
+                            f"{'+' if net_diff_pct > 0 else ''}{net_diff_pct:.2f} %"
+                        )
+                    else:
+                        row3[(year, "Net vs WAC")] = None
                 # Net MFN is only available when GTN applied
 
             if country.lower() != "united states of america":
@@ -1281,66 +1278,14 @@ def main():
             key="selected_packs",
         )
 
-        # WAC Price Input Section
-        with st.expander("Enter WAC Prices (optional)", expanded=False):
+        # WAC Price Input Section (automatic)
+        with st.expander("WAC Prices (automatic)", expanded=False):
             st.markdown(
-                "Enter Wholesale Acquisition Cost (WAC) per pack to compare against MFN prices."
+                "WAC prices default to the USD price for each pack; manual entry is disabled."
             )
-
-            # Allow entering WACs for all selected brands (or the single selected brand)
-            brands_for_wac = selected_brands if selected_brands else [selected_brand]
-
-            for brand in brands_for_wac:
-                st.markdown(f"**{brand}**")
-                # Determine packs that belong to this brand (respect selected_countries)
-                brand_packs = fetch_packs_for_countries(brand, selected_countries)
-                if not brand_packs:
-                    # fallback to brand-specific filters
-                    bf = fetch_brand_specific_filters(brand)
-                    brand_packs = bf.get("packs", [])
-
-                # Determine packs that have US data for this brand
-                us_packs_for_brand = (
-                    fetch_packs_for_countries(brand, ["United States of America"]) or []
-                )
-
-                # Start from either selected_packs (if user filtered) or all brand packs
-                if selected_packs:
-                    packs_for_wac = [p for p in selected_packs if p in brand_packs]
-                else:
-                    packs_for_wac = brand_packs
-
-                # Restrict to packs that have US data only
-                packs_for_wac = [p for p in packs_for_wac if p in us_packs_for_brand]
-
-                # Fallback to available_packs intersection if empty
-                if not packs_for_wac:
-                    packs_for_wac = [
-                        p for p in available_packs if p in us_packs_for_brand
-                    ]
-
-                for pack in packs_for_wac:
-                    wac_key = (brand.lower(), pack.lower())
-                    current_wac = st.session_state.wac_prices.get(wac_key, 0.0)
-
-                    # Use a unique widget key per brand+pack to avoid collisions
-                    widget_key = (
-                        f"wac_input_{brand.replace(' ', '_')}_{pack.replace(' ', '_')}"
-                    )
-
-                    wac_val = st.number_input(
-                        label=f"WAC - {pack}",
-                        value=current_wac,
-                        min_value=0.0,
-                        step=0.01,
-                        key=widget_key,
-                        help=f"Enter WAC price for pack: {pack} (brand: {brand})",
-                    )
-
-                    if wac_val > 0:
-                        st.session_state.wac_prices[wac_key] = wac_val
-                    elif wac_key in st.session_state.wac_prices:
-                        del st.session_state.wac_prices[wac_key]
+            # Clear any manual WAC entries to avoid confusion
+            if st.session_state.get("wac_prices"):
+                st.session_state.wac_prices = {}
 
     else:
         selected_packs = None

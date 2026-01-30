@@ -1,0 +1,78 @@
+[
+    {
+        "title": "CMS GENEROUS Model: Medicaid Drug Price Alignment",
+        "key_takeaways": [
+            "Voluntary 5-year pilot (2026-2030) for state Medicaid programs and manufacturers.",
+            "Aims to align Medicaid drug prices with select international benchmarks (Most Favored Nation).",
+            "Participating manufacturers get Uniform Coverage Criteria across participating states.",
+            "Goal is to lower Medicaid drug spending and improve patient access."
+        ],
+        "pricing_and_market_access": [
+            "Likely to exert downward pressure on net prices for drugs heavily utilized by Medicaid.",
+            "Could influence global launch sequencing, potentially pressuring 'launch early in US' strategies.",
+            "Acts as a cost-containment measure for Medicaid, aiming to increase access through affordability."
+        ],
+        "pharma_pov_todos": [
+            "Evaluate participation benefits (uniform coverage) against potential revenue loss from lower prices.",
+            "Re-model NPV for Medicaid-heavy assets considering MFN-level net prices.",
+            "Assess global pricing strategies to account for potential MFN multiplier impact."
+        ]
+    },
+    {
+        "title": "Medicare Drug Price Negotiation: Third Cycle Expands to Part B",
+        "key_takeaways": [
+            "CMS selected 15 high-cost Part D and, for the first time, Part B drugs for negotiation.",
+            "Negotiations occur in 2026, with new prices effective January 1, 2028.",
+            "Aims to reduce prescription drug costs for seniors and taxpayers.",
+            "Builds on previous cycles, which saved an estimated $8.5 billion in 2024."
+        ],
+        "pricing_and_market_access": [
+            "Will significantly impact pricing for selected Part B and Part D drugs, leading to lower net prices.",
+            "Expands cost-containment measures to a broader range of high-cost drugs, including those administered in clinics.",
+            "Could influence R&D and portfolio decisions for future high-spend Medicare drugs."
+        ],
+        "pharma_pov_todos": [
+            "Prepare for negotiations by compiling comprehensive data on clinical benefit, R&D costs, and unmet needs.",
+            "Re-evaluate long-term commercialization and lifecycle management strategies for selected and future eligible drugs.",
+            "Assess portfolio pipeline for potential future negotiation eligibility and adjust development priorities."
+        ]
+    },
+    {
+        "title": "France Tightens P&MA: Higher Rebates, Price Pressure",
+        "key_takeaways": [
+            "Increased healthcare spending target (ONDAM) but with unchanged growth rate.",
+            "Safeguard clause reformed to a turnover-based tax, with the clause as an 'exceptional' backstop.",
+            "CEPS can now use a new 'comparable-country' reference basket for pricing, including non-EU markets.",
+            "Commercial discount caps in community pharmacies adjusted, with higher caps for generics/biosimilars."
+        ],
+        "pricing_and_market_access": [
+            "Intensified pricing pressure and higher rebates are expected, leading to a wider gross-to-net gap.",
+            "New comparable-country basket could lead to lower net prices, especially if non-EU countries with lower prices are included.",
+            "Acts as a significant cost-containment measure, making price uplifts harder to secure."
+        ],
+        "pharma_pov_todos": [
+            "Reassess French P&MA strategies, including pricing and rebate models, to adapt to the tougher environment.",
+            "Update EU price corridor models to account for potential new reference countries in France.",
+            "Prepare for increased scrutiny on pricing and potential litigation, strengthening negotiation dossiers."
+        ]
+    },
+    {
+        "title": "Italy Reinstates Mandatory 5% Drug Price Reduction",
+        "key_takeaways": [
+            "Abolishes the faculty for pharma companies to suspend the 5% price reduction.",
+            "Prices of specified medicines are redetermined with the 5% reduction applied from January 1, 2026.",
+            "The measure is mandated by law (Article 1, comma 365, Law 30 December 2025, n. 199).",
+            "Aims to update public prices and ensure cost containment."
+        ],
+        "pricing_and_market_access": [
+            "Directly reduces public prices for affected medicines by 5%, impacting revenue.",
+            "Acts as a clear cost-containment measure for the Italian healthcare system.",
+            "May influence international reference pricing for other countries referencing Italian prices."
+        ],
+        "pharma_pov_todos": [
+            "Update financial forecasts and revenue projections to reflect the mandatory 5% price reduction.",
+            "Assess the impact on profitability for affected products in the Italian market.",
+            "Monitor potential ripple effects on international reference pricing strategies."
+        ]
+    }
+]
