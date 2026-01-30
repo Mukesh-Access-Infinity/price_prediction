@@ -293,12 +293,12 @@ class PolicySummary(BaseModel):
     )
 
     key_takeaways: List[str] = Field(
-        ..., max_items=4, description="Maximum 4 bullet points summarizing the policy"
+        ..., max_length=4, description="Maximum 4 bullet points summarizing the policy"
     )
 
     pricing_and_market_access: List[str] = Field(
         ...,
-        max_items=3,
+        max_length=3,
         description=(
             "Maximum 3 bullet points addressing pricing and patient access impacts:\n"
             "- Potential effect on pricing of existing products and pipeline assets\n"
@@ -309,7 +309,7 @@ class PolicySummary(BaseModel):
 
     pharma_pov_todos: List[str] = Field(
         ...,
-        max_items=3,
+        max_length=3,
         description=(
             "Maximum 3 concise bullet points suggesting potential actions for pharma companies and stakeholders:\n"
             "- Planning, implementation, and portfolio strategy adjustments\n"
@@ -466,7 +466,8 @@ def get_policy_analysis(parts: List[dict[str, Part]]):
             with open(path, "r", encoding="utf-8") as f:
                 existing_data = json.load(f)
                 if existing_data:
-                    return existing_data
+                    res.extend(existing_data) if isinstance(existing_data, list) else res.append(existing_data)
+                    continue
         response = call_llm(
             prompt=prompt,
             contents=valid_parts,
