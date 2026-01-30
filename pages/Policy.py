@@ -34,7 +34,29 @@ HEADERS = {
 
 from pathlib import Path
 
-def _ret(path: str|Path):
+
+def _rel(path: str | Path, new_text: dict | list[dict] = None):
+    if isinstance(path, str):
+        path = Path(path)
+    if Path(path).is_file():
+        import json
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            existing_text: dict | list[dict] = json.load(f)
+            if existing_text:
+                if isinstance(existing_text, dict):
+                    existing_text = [existing_text]
+                if isinstance(new_text, dict):
+                    new_text = [new_text]
+                if isinstance(existing_text, list):
+                    new_text = [i for i in new_text if i]
+                existing_text.extend(new_text or [])
+
+                with open(path, "w", encoding="utf-8") as f_:
+                    json.dump(existing_text, f_, indent=4)
+
+
+def _ret(path: str | Path):
     if Path(path).is_file() or os.path.exists(path):
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             existing_text = f.read().strip()
@@ -213,7 +235,7 @@ def _scrape_all():
         try:
             res.append((n, f()))
         except Exception as e:
-            print(f"Error scraping {f.__name__}: {e}")
+            raise ValueError(f"Error scraping {f.__name__}: {e}")
     return res
 
 
@@ -331,7 +353,7 @@ from google.genai.types import Part
 from pathlib import Path
 
 DIR = Path("./data/policy/")
-DIR.mkdir(parents=True, exist_ok=True)
+_ = DIR.mkdir(parents=True, exist_ok=True)
 
 response_type_link_map = {
     (
@@ -349,13 +371,13 @@ You are tasked with analyzing a new healthcare or pharmaceutical policy. Provide
 1. **Title of the Policy:** Brief, not exceeding 10 words.
 2. **Key Takeaways:** Maximum 4 bullet points summarizing the policy.
 3. **Pricing and Market Access (P&MA) Impact:** Maximum 3 crisp bullet points addressing:
-   * Potential effect on pricing of existing products and pipeline assets.
-   * Effect on patient access to medicines.
-   * Whether the policy acts as a cost-containment measure, accelerates access, or has negative implications.
+* Potential effect on pricing of existing products and pipeline assets.
+* Effect on patient access to medicines.
+* Whether the policy acts as a cost-containment measure, accelerates access, or has negative implications.
 4. **Point of View (PoV) on Pharma To-Dos:** Maximum 3 concise bullet points suggesting potential action items for pharma companies and stakeholders, including:
-   * Planning, implementation, and portfolio strategy adjustments.
-   * Mitigation or modeling strategies.
-   * Impact on launch sequence, commercialization, pricing, and access potential.
+* Planning, implementation, and portfolio strategy adjustments.
+* Mitigation or modeling strategies.
+* Impact on launch sequence, commercialization, pricing, and access potential.
 Ensure the analysis is in English. If source content is in another language, translate it first before analysis.
 Ensure all bullet points are crisp, actionable, and focused on strategic insights.
 
@@ -379,7 +401,7 @@ Assessment of how to integrate the new rules on regulatory exclusivities into th
 Operationally equip themselves with a revised launch strategy (27-country preparedness model) 
 Monitor generic participation in tenders even while under protection to anticipate the exact date of price erosion 
 Conduct gap audits on CMC (Chemistry, Manufacturing, and Controls) data to ensure the environmental impact evidence is robust enough to pass an EMA audit 
- 
+
 Increased Cost-Effectiveness Threshold in the UK 
 NICE’s cost-effectiveness range will increase from the current level of £20,000-30,000 to £25,000-35,000 per QALY, effective from April’2026 (doesn’t’ apply to Highly Specialised Technologies)
 Clear process outlined for ongoing assessments: 
@@ -395,7 +417,7 @@ PoV on Pharma To-Dos
 Manufacturers have the opportunity for re-evaluation of products with a negative recommendation, however, that entails substantial new evidence like RWE, long-term clinical data, or a new Patient Access Scheme (PAS) 
 Re-evaluate UK's position in the global launch sequence as there will be a potential for higher list prices (or at least less aggressive discounts to hit the old £20k–£30k cap) 
 Adopt the new EQ-5D-5L value set for all 2026+ submission 
- 
+
 Most Favored Nation (MFN) & The GENEROUS Model 
 The GENEROUS Model (GENErating cost Reductions fOr U.S. Medicaid) is the primary vehicle for MFN implementation where manufacturers provide supplemental rebates to participating state Medicaid programs to match an international benchmark (second lowest GDP-adjusted net price among United Kingdom, France, Germany, Italy, Canada, Japan, Denmark, and Switzerland)
 Applies to all single-source/innovator multiple-source drugs with Medicaid rebate agreement
@@ -408,8 +430,8 @@ PoV on Pharma To-Dos
 Establish a Global Floor Price that accounts for the MFN multiplier 
 Conduct NPV re-modeling for "Medicaid-heavy" assets using MFN-level net prices 
 Prepare a TrumpRx / Cash-Pay Channel Strategy for portfolio products which should be diverted to the DTC channel to capture market share from PBM-excluded patients 
- 
- 
+
+
 Germany's Medical Research Act 
 Introduces optional confidential net reimbursement prices post-AMNOG (with 9% mandatory extra discount on the negotiated price + local R&D requirements: ≥5% trial patients in DEU or permanent research department in DEU)
 Confidential pricing is elective (sunset 2028), public prices remain default/norm
@@ -438,9 +460,9 @@ def load_policy_texts() -> List[dict[str, Part]]:
             if text:
                 parts.append({name: Part.from_text(text=text)})
             else:
-                st.warning(f"Text file for {name} is empty")
+                raise UserWarning(f"Text file for {name} is empty")
         except Exception as e:
-            st.error(f"Failed to read {name}: {e}")
+            raise e
     return parts
 
 
@@ -466,7 +488,10 @@ def get_policy_analysis(parts: List[dict[str, Part]]):
             with open(path, "r", encoding="utf-8") as f:
                 existing_data = json.load(f)
                 if existing_data:
-                    res.extend(existing_data) if isinstance(existing_data, list) else res.append(existing_data)
+                    if isinstance(existing_data, list):
+                        res.extend(existing_data)
+                    else:
+                        res.append(existing_data)
                     continue
         response = call_llm(
             prompt=prompt,
@@ -487,31 +512,35 @@ def get_policy_analysis(parts: List[dict[str, Part]]):
     return res
 
 
-st.set_page_config(page_title="Policy Analysis", layout="wide")
+_ = st.set_page_config(page_title="Policy Analysis", layout="wide")
 
-parts = load_policy_texts()
-if not parts:
-    st.error("No policy documents loaded. Please ensure scraping has run successfully.")
-    st.stop()
+with st.spinner("Loading policy analysis..."):
 
-try:
+    parts = load_policy_texts()
+
+    if not parts:
+        raise ValueError(
+            "No policy documents loaded. Please ensure scraping has run successfully."
+        )
+
     pa_list = get_policy_analysis(parts)
-except Exception as e:
-    st.error(f"Failed to generate policy analysis: {e}")
-    st.stop()
+
+    if not pa_list:
+
+        raise ValueError("No policy analysis returned from LLM.")
+
+
 st.title("Policy Analysis", text_alignment="center")
 for idx, item in enumerate(pa_list):
 
     if idx > 0:
         st.divider()
 
-    # Branch based on model type
     try:
         item = PolicyAnalysis.model_validate(item)
     except pydantic.ValidationError:
         item = PolicySummary.model_validate(item)
     except Exception as e:
-        st.error(f"Error validating item: {e}")
         continue
     if isinstance(item, PolicyAnalysis):
 
@@ -579,14 +608,15 @@ for idx, item in enumerate(pa_list):
                 for (response_type, prompt), name in response_type_link_map.items():
                     if response_type == PolicySummary.__name__:
                         links = [link_map[n] for n in name]
-                        s =[]
+                        s = []
                         for l in links:
                             if isinstance(l, list):
                                 s.extend(l)
-                            else: s.append(l)
+                            else:
+                                s.append(l)
                         for link in s:
                             st.markdown(f"- {link}")
-                            
+
             st.header("Key Takeaways")
             for k in item.key_takeaways:
                 st.markdown(f"- {k}")
